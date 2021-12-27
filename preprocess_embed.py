@@ -38,7 +38,7 @@ def main(**kwargs):
 
     loss_fn = get_loss(kwargs["loss"])
     
-    train(kwargs["nr_epochs"], net, train_dataloader, eval_dataloader, optimizer, loss_fn)
+    train(kwargs["nr_epochs"], net, train_dataloader, optimizer, loss_fn, valid_dl=eval_dataloader)
     
     # Testing phase
     test_sentence = "i want a morning flight from boston to chicago"
@@ -48,8 +48,8 @@ def main(**kwargs):
     print(*list(zip(test_sentence.split(), test_inference)), sep='\n')
 
 experiment = {
-    "train_path": "/content/ATIS/train.json",
-    "test_path": "/content/ATIS/test.json",
+    "train_path": "ATIS/train.json",
+    "test_path": "ATIS/test.json",
     "valid_ratio": 0.1,
     "batch_size": 32,
     "model": "gru",

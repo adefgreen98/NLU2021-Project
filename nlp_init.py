@@ -1,6 +1,8 @@
 # Needed for avoiding kernel restart in jupyter
-import os
-os.system("python -m spacy download en_core_web_lg")
+
+# COMMANDS FOR DOWNLOADING MODEL
+# import os
+# os.system("python -m spacy download en_core_web_lg")
 
 import spacy
 try: import en_core_web_lg 
