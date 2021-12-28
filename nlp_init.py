@@ -10,6 +10,7 @@ except ModuleNotFoundError: pass
 
 def get_preprocessor():
     nlp = None
+    
     # needed to avoid kernel restart to use spacy.load('en_core_web_lg')
     try: nlp = en_core_web_lg.load()
     except ModuleNotFoundError: nlp = spacy.load('en') 

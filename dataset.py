@@ -208,6 +208,7 @@ class ATISDataset(torch.utils.data.Dataset):
             label = [ATISDataset.__empty_ent] * to_pad + [ATISDataset.__empty_ent] + label + [ATISDataset.__empty_ent]
         return sentence, label
 
+
 class ATISSubset(torch.utils.data.Subset):
     """
     A class for easily subsetting an ATISDataset without losing the possibility 
@@ -216,6 +217,7 @@ class ATISSubset(torch.utils.data.Subset):
     def collate_ce(self, batch):
         """Collate function for CrossEntropyLoss."""
         return self.dataset.collate_ce(batch)
+
 
 def split_dataset(dataset, ratio=0.1):
     """

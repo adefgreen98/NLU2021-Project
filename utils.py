@@ -45,6 +45,7 @@ def compute_accuracy(yt, yp, lab2idx):
     confusion_matrix = torch.zeros(len(lab2idx), len(lab2idx), dtype=torch.int)
     for i in range(len(yt)): confusion_matrix[yt[i], yp[i]] = confusion_matrix[yt[i], yp[i]] + 1
     d = {lab: confusion_matrix[lab2idx[lab], lab2idx[lab]].item() / confusion_matrix[lab2idx[lab]].sum()  for lab in lab2idx}
+    d["total"] = sum(list(d.values())) / len(d)
     return d
 
 
@@ -84,10 +85,10 @@ def epoch(model, dataloader, optimizer, loss_fn, mode):
 
     loss_history, acc_history = iterate(model, dataloader, optimizer, loss_fn, mode)
     mean_loss = loss_history.mean()
-    mean_acc = compute_accuracy(*acc_history, model.lab2idx) #here using list of all outputs from each batch
+    global_acc = compute_accuracy(*acc_history, model.lab2idx) #here using list of all outputs from each batch
 
     #TODO: tensorboard or something to plot live
-    return mean_loss, mean_acc
+    return mean_loss, global_acc["total"]
 
 
 def train(nr, model, train_dl, optimizer, loss_fn, valid_dl=None):

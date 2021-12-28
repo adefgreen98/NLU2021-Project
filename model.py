@@ -95,7 +95,7 @@ class Seq2SeqModel(nn.Module):
         loss = torch.stack(loss)
         loss = torch.sum(loss) #TODO: use mean instead of sum?
 
-        acc_labels_list = [yt.argmax(dim=-1).flatten().tolist(), yp.flatten().tolist()]
+        acc_labels_list = [yp.argmax(dim=-1).flatten().tolist(), yt.flatten().tolist()]
 
         return loss, acc_labels_list
 
