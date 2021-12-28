@@ -1,6 +1,8 @@
 import json
 import torch
 from random import shuffle
+from collections import defaultdict
+
 
 class ATISDataset(torch.utils.data.Dataset):
     
@@ -19,18 +21,28 @@ class ATISDataset(torch.utils.data.Dataset):
         :param path: path of the .json file containing the dataset.
         """
         self._raw = json.load(open(path))["rasa_nlu_data"]["common_examples"]
-        self._statistics = None
-        self._statistics = self.get_statistics()
 
-        # reverse dict of tag indices
-        self.tag2idx = {k: i for i, k in enumerate(self._statistics["entities"])}
+        self._statistics = None
 
         # embedder with vocabulary and tokenizer (for vector conversion)
         if ATISDataset.__embedder is None:
             ATISDataset.__embedder = embedder
-        
+
+        # retrieve unique entities
+        entities = set()
+        for data in self._raw:
+            for ent in data["entities"]: entities.add(ent["entity"])
+        entities.add(ATISDataset.__empty_ent)
+        entities = list(entities)
+
+        # reverse dict of tag indices
+        self.tag2idx = {k: i for i, k in enumerate(entities)}
+
         # iterable list of items in the dataset
         self._seq_items = self.preprocess_items()
+
+        # populates statistics with preprocessed items
+        self._statistics = self.get_statistics()
 
 
     def __getitem__(self, index):
@@ -71,8 +83,7 @@ class ATISDataset(torch.utils.data.Dataset):
         - 'len_max': maximum sentence length (used also for padding)
         - 'len_avg': average sentence length
         """
-        if self._statistics is None:
-            self._populate_statistics()
+        if self._statistics is None: self._populate_statistics()
         return self._statistics
 
 
@@ -102,7 +113,7 @@ class ATISDataset(torch.utils.data.Dataset):
         for i in range(len(self._raw)):
             snt, lab = self._raw[i]["text"], self._raw[i]["entities"] 
             x, y = ATISDataset._align_label(snt, lab)
-            x, y = ATISDataset._pad_and_preprocess(x, y, self._statistics["len_max"])
+            x, y = ATISDataset._pad_and_preprocess(x, y, self.get_max_sent_length())
             x = torch.stack([torch.tensor(ATISDataset.__embedder.vocab[word].vector) for word in x])
             y = torch.tensor([self.tag2idx[tag] for tag in y]) 
             l[i] = (x, y)
@@ -127,19 +138,17 @@ class ATISDataset(torch.utils.data.Dataset):
         else:
             self._statistics = {
                 "entities": None,
-                "ent_counts": {},
+                "ent_counts": defaultdict(int),
                 "size": len(self._raw),
                 "len_max": self.get_max_sent_length(),
                 "len_avg": self.get_avg_sent_length()
             }
             
-            for d in self._raw:
-                label = d["entities"]
-                for ent in label:
-                    try: self._statistics["ent_counts"][ent["entity"]] += 1
-                    except KeyError: self._statistics["ent_counts"][ent["entity"]] = 1
-            
-            self._statistics["entities"] = list(self._statistics["ent_counts"].keys()) + [ATISDataset.__empty_ent] 
+            self._statistics["entities"] = list(self.tag2idx.keys())
+
+            for _, label in self._seq_items:
+                for ent_idx in label:
+                    self._statistics["ent_counts"][self._statistics["entities"][ent_idx]] += 1
         return
 
 
@@ -219,7 +228,7 @@ class ATISSubset(torch.utils.data.Subset):
         return self.dataset.collate_ce(batch)
 
 
-def split_dataset(dataset, ratio=0.1):
+def split_dataset(dataset, valid_ratio=0.1):
     """
     Involved in splitting training set and validation set from the original dataset.
     Inputs:
@@ -229,7 +238,7 @@ def split_dataset(dataset, ratio=0.1):
     :param valid_set: same as training_set, but with samples for evaluation
     """
     _idx = list(range(len(dataset)))
-    _last = round(len(_idx) * ratio)
+    _last = round(len(_idx) * (1 - valid_ratio))
     shuffle(_idx)
     train = ATISSubset(dataset, _idx[:_last])
     valid = ATISSubset(dataset, _idx[_last:])

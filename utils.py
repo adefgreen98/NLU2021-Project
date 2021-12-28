@@ -41,9 +41,11 @@ def get_loss(name):
 
     
 """Accuracy"""
-def compute_accuracy(yt, yp, lab2idx):
+def compute_accuracy(yp, yt, lab2idx):
     confusion_matrix = torch.zeros(len(lab2idx), len(lab2idx), dtype=torch.int)
-    for i in range(len(yt)): confusion_matrix[yt[i], yp[i]] = confusion_matrix[yt[i], yp[i]] + 1
+    for i in range(len(yt)): 
+        for idx in zip(yt[i], yp[i]):
+            confusion_matrix[idx] = confusion_matrix[idx] + 1
     d = {lab: confusion_matrix[lab2idx[lab], lab2idx[lab]].item() / confusion_matrix[lab2idx[lab]].sum()  for lab in lab2idx}
     d["total"] = sum(list(d.values())) / len(d)
     return d
