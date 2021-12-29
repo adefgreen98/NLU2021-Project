@@ -27,13 +27,16 @@ def main(**kwargs):
 
     dataset = get_dataset(kwargs["train_path"], nlp)
     labels = dataset.get_labels()
-    train_set, valid_set = split_dataset(dataset, ratio=kwargs["valid_ratio"])
+    train_set, valid_set = split_dataset(dataset, valid_ratio=kwargs["valid_ratio"])
     
     train_dataloader = get_dataloader(train_set, batch_size=kwargs["batch_size"], shuffle=False)
     eval_dataloader = get_dataloader(valid_set, batch_size=kwargs["batch_size"])
     # test_dataloader = get_dataloader(get_dataset(kwargs["test_path"], nlp), batch_size=1)
     
     net = get_model(kwargs["model"], labels, nlp.vocab.vectors_length, kwargs["hidden_size"], device=get_device())
+
+    del nlp
+    
     optimizer = get_optimizer(net, kwargs["learning_rate"], kwargs["optimizer"])
 
     loss_fn = get_loss(kwargs["loss"])
@@ -47,6 +50,7 @@ def main(**kwargs):
     print(f"""Lengths: Sent = {len(test_sentence.split())} | Inf = {len(test_inference)}""")
     print(*list(zip(test_sentence.split(), test_inference)), sep='\n')
 
+
 experiment = {
     "train_path": "ATIS/train.json",
     "test_path": "ATIS/test.json",
@@ -55,10 +59,11 @@ experiment = {
     "model": "gru",
     "loss": "cross_entropy",
     "optimizer": "adam",
-    "hidden_size": 256,
-    "learning_rate": 0.001,
+    "hidden_size": 50,
+    "learning_rate": 3e-4,
     "nr_epochs": 20
 }
+
 
 if __name__ == '__main__':
     main(**experiment)

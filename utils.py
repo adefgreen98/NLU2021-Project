@@ -1,3 +1,5 @@
+import gc
+
 import torch
 import torch.nn as nn
 from model import Seq2SeqModel
@@ -89,6 +91,9 @@ def epoch(model, dataloader, optimizer, loss_fn, mode):
     mean_loss = loss_history.mean()
     global_acc = compute_accuracy(*acc_history, model.lab2idx) #here using list of all outputs from each batch
 
+    del loss_history, acc_history
+    gc.collect()
+    
     #TODO: tensorboard or something to plot live
     return mean_loss, global_acc["total"]
 

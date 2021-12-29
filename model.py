@@ -48,10 +48,13 @@ class Decoder(nn.Module):
     def forward(self, x, h_encoder):
         h = self.model(x, h_encoder)
         outs = h[0] #excluding decoder final hidden state
-        o = torch.zeros(outs.shape[0], outs.shape[1], self.output_size)
-        for b in range(o.shape[0]): #looping over batch
-            for i in range(o.shape[1]): #looping over sequence length
-                o[b][i] = self.out(self.classifier(outs[b][i]))
+
+        o = self.out(self.classifier(outs))
+
+        # for b in range(o.shape[0]): #looping over batch
+        #     for i in range(o.shape[1]): #looping over sequence length
+        #         o[b][i] = self.out(self.classifier(outs[b][i]))
+        
         return o
 
 """## Seq2Seq
@@ -72,8 +75,8 @@ class Seq2SeqModel(nn.Module):
         
         self.input_size = input_size
 
-        self.encoder = Encoder(input_size, hidden_size=hidden_size, num_layers=num_layers, unit=unit_name)
-        self.decoder = Decoder(input_size, output_size, hidden_size=hidden_size, num_layers=num_layers, unit=unit_name)
+        self.encoder = Encoder(input_size, hidden_size=hidden_size, num_layers=num_layers, unit=unit_name).to(device)
+        self.decoder = Decoder(input_size, output_size, hidden_size=hidden_size, num_layers=num_layers, unit=unit_name).to(device)
 
         self.embedder = None # needed for converting words to vectors during inference
 
@@ -87,9 +90,11 @@ class Seq2SeqModel(nn.Module):
         out_probs = self.decoder(x, h)
         return out_probs
     
+    
     def process_batch(self, data, loss_fn):
         x, yt = data
         x = x.to(self.device)
+        yt = yt.to(self.device)
         yp = self(x)
         loss = [loss_fn(yp[:, i], yt[:, i]) for i in range(yp.shape[1])]
         loss = torch.stack(loss)
