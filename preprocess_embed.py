@@ -46,7 +46,7 @@ def main(**kwargs):
     # Testing phase
     test_sentence = "i want a morning flight from boston to chicago"
     print("------------- TEST -------------")
-    test_inference = net.run_inference(s)
+    test_inference = net.run_inference(test_sentence)
     print(f"""Lengths: Sent = {len(test_sentence.split())} | Inf = {len(test_inference)}""")
     print(*list(zip(test_sentence.split(), test_inference)), sep='\n')
 
