@@ -13,6 +13,8 @@ Original file is located at
 # Dependencies
 """
 
+from itertools import product
+
 from utils import *
 from nlp_init import get_preprocessor
 
@@ -69,22 +71,33 @@ def main(**kwargs):
     test(net, test_sentence, padder)
 
 
-experiment = {
-    "train_path": "ATIS/train.json",
-    "test_path": "ATIS/test.json",
-    "valid_ratio": 0.1,
-    "batch_size": 32,
-    "model": "gru",
-    "loss": "cross_entropy",
-    "optimizer": "adam",
-    "hidden_size": 50,
-    "learning_rate": 3e-4,
-    "nr_epochs": 20
+
+def produce_configurations(params):
+    param_names = list(params.keys())
+    configurations = product(*list(params.values()))
+
+    for cfg in configurations:
+        yield {k: v for k, v in zip(param_names, cfg)}
+
+
+
+parameters = {
+    "valid_ratio": [0.1],
+    "batch_size": [32],
+    "model": ["lstm"],
+    "loss": ["cross_entropy"],
+    "optimizer": ["sgd"],
+    "hidden_size": [50],
+    "learning_rate": [3e-4],
+    "nr_epochs": [20],
 }
 
 
 if __name__ == '__main__':
-    main(**experiment)
+
+    for cfg in produce_configurations(parameters):
+        print("---> Configuration: <---", *[str(k) + ": " + str(v) for k,v in cfg.items()], sep='\n')
+        main(train_path = "ATIS/train.json", test_path = "ATIS/test.json", save_path = "", **cfg)
 
 
 
