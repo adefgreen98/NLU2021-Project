@@ -111,7 +111,7 @@ class Seq2SeqModel(nn.Module):
         """
         Computes label indices from raw model outputs (tag probabilities for each token).
         """
-        return sent_probs.argmax(dim=-1)
+        return sent_probs.argmax(dim=-1).tolist()
     
     def convert_label(self, v):
         """
@@ -128,16 +128,18 @@ class Seq2SeqModel(nn.Module):
             print("Model Error: no embedder function has been set on this model")
             return None
         else:
-            x = self.embedder(sentence, self.input_size).unsqueeze(0).to(self.device)
+            x = self.embedder(sentence).unsqueeze(0).to(self.device)
             probs = self.forward(x).squeeze(0)
-            return self.convert_label(self.get_label_idx(probs))[1:len(sentence.split())+1] # excluding EOS, SOS and padding 
-    
+            # return self.convert_label(self.get_label_idx(probs))[1:len(sentence.split())+1] # excluding EOS, SOS and padding 
+            return self.convert_label(self.get_label_idx(probs))
+
     def set_embedder(self, embedder):
         """ 
-        Sets the embedder **function** in the model; this should be the same embedding function
-        of the dataset used (to mantain consistent sizes and padding methods).
+        Sets the embedder **function** used by the model at inference time; this should be the same embedding function
+        of the dataset used during training (to mantain consistent sizes and padding methods). 
+        This is needed when testing / deploying the model. 
         
-        :param embedder: a callable (str, pad_size) -> torch.Tensor, mapping a string into a tensor that can 
+        :param embedder: a callable (str -> torch.Tensor), mapping a string into a tensor that can 
         be managed by a model.
         """
         self.embedder = embedder

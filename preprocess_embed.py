@@ -16,8 +16,25 @@ Original file is located at
 from utils import *
 from nlp_init import get_preprocessor
 
+def test(net, test_sentence, padder=None):
+    print("------------- TEST -------------")
+    test_inference = net.run_inference(test_sentence)
+    print(f"""Lengths: Sent = {len(test_sentence.split())} | Inf = {len(test_inference)}""")
+    # print(*list(zip(test_sentence.split(), test_inference)), sep='\n')
+    print(*list(zip(padder(test_sentence), test_inference)), sep='\n')
 
-"""SpaCy dependencies adjustments"""
+
+def simple_inference():
+    nlp = get_preprocessor()
+    dataset = get_dataset('ATIS\\train.json', nlp)
+    labels = dataset.get_labels()
+    net = get_model('gru', labels, nlp.vocab.vectors_length, 50, device='cpu')
+    test_sentence = "i want a morning flight from boston to chicago"
+    inference_embedder_fn = lambda sent: dataset.preprocess_single_sentence(sent, dataset.get_max_sent_length())
+    net.set_embedder(inference_embedder_fn)
+    padder = lambda x: dataset._preprocess_test_sentence(x, pad_len=30)
+    test(net, test_sentence, padder)
+
 
 
 """# Main loop"""
@@ -34,8 +51,6 @@ def main(**kwargs):
     # test_dataloader = get_dataloader(get_dataset(kwargs["test_path"], nlp), batch_size=1)
     
     net = get_model(kwargs["model"], labels, nlp.vocab.vectors_length, kwargs["hidden_size"], device=get_device())
-
-    del nlp
     
     optimizer = get_optimizer(net, kwargs["learning_rate"], kwargs["optimizer"])
 
@@ -45,10 +60,13 @@ def main(**kwargs):
     
     # Testing phase
     test_sentence = "i want a morning flight from boston to chicago"
-    print("------------- TEST -------------")
-    test_inference = net.run_inference(test_sentence)
-    print(f"""Lengths: Sent = {len(test_sentence.split())} | Inf = {len(test_inference)}""")
-    print(*list(zip(test_sentence.split(), test_inference)), sep='\n')
+
+    # building embedder to have just 1 argument, as needed by the model
+    inference_embedder_fn = lambda sent: dataset.preprocess_single_sentence(sent, dataset.get_max_sent_length())
+    net.set_embedder(inference_embedder_fn)
+
+    padder = lambda x: dataset._preprocess_test_sentence(x, pad_len=30)
+    test(net, test_sentence, padder)
 
 
 experiment = {
