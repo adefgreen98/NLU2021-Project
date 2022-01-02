@@ -35,6 +35,9 @@ def get_model(model_type, labels, input_size, hidden_size=256, device='cuda'):
 """Optimizer"""
 def get_optimizer(model, lr=0.001, name="adam"):
     if name == 'adam': return torch.optim.Adam(model.parameters(), lr)
+    elif name == 'sgd': return torch.optim.SGD(model.parameters(), lr)
+    elif name == 'adamw': return torch.optim.AdamW(model.parameters, lr)
+    else: raise RuntimeError("unexpected optimizer name " + str(name))
 
 
 """Loss function"""
