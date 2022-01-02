@@ -113,20 +113,19 @@ class ATISDataset(torch.utils.data.Dataset):
         for i in range(len(self._raw)):
             snt, lab = self._raw[i]["text"], self._raw[i]["entities"] 
             x, y = ATISDataset._align_label(snt, lab)
-            x, y = ATISDataset._pad_and_preprocess(x, y, self.get_max_sent_length())
+            x, y = ATISDataset._apply_padding(x, y, self.get_max_sent_length())
             x = torch.stack([torch.tensor(ATISDataset.__embedder.vocab[word].vector) for word in x])
             y = torch.tensor([self.tag2idx[tag] for tag in y]) 
             l[i] = (x, y)
         return l
 
     @staticmethod
-    def preprocess_single_sentence(sent, pad_len):
+    def preprocess_single_sentence(sent=None, pad_len=48):
         """
         Transforms one single sentence in vector format, acceptable by a model.
         Used for model inference.
         """
-        x, _ = ATISDataset._align_label(sent, [])
-        x, _ = ATISDataset._pad_and_preprocess(x, [], pad_len)
+        x = ATISDataset._preprocess_test_sentence(sent, pad_len)
         return torch.stack([torch.tensor(ATISDataset.__embedder.vocab[word].vector) for word in x])
 
 
@@ -196,7 +195,7 @@ class ATISDataset(torch.utils.data.Dataset):
 
 
     @staticmethod
-    def _pad_and_preprocess(sentence, label, pad_size, right_pad=True):
+    def _apply_padding(sentence, label, pad_size, right_pad=True):
         """
         :param sentence: a list containing the tokenized sentence before padding
         :param label: a list containing the tokenwise entity tags
@@ -216,6 +215,16 @@ class ATISDataset(torch.utils.data.Dataset):
             sentence = [ATISDataset.__padding_token] * to_pad + [ATISDataset.__sos_token] + sentence + [ATISDataset.__eos_token]
             label = [ATISDataset.__empty_ent] * to_pad + [ATISDataset.__empty_ent] + label + [ATISDataset.__empty_ent]
         return sentence, label
+
+
+    @staticmethod
+    def _preprocess_test_sentence(sent, pad_len):
+        """
+        Preprocesses (= align and apply padding) a single sentence for the use-case of inference during testing. 
+        """
+        x, _ = ATISDataset._align_label(sent, [])
+        x, _ = ATISDataset._apply_padding(x, [], pad_len)
+        return x
 
 
 class ATISSubset(torch.utils.data.Subset):
