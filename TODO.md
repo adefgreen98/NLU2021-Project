@@ -12,5 +12,6 @@
 ## Code specific
 * solve the `nan` accuracy issue (due to zero items of a specific category in validation or training) --> maybe use sigmoid / squashing number of false positives?
 * remove get_model dependency on 'labels' and write a 'set_labels' method
+* add tqdm for epochs
 
 """

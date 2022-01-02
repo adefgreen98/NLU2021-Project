@@ -50,10 +50,6 @@ class Decoder(nn.Module):
         outs = h[0] #excluding decoder final hidden state
 
         o = self.out(self.classifier(outs))
-
-        # for b in range(o.shape[0]): #looping over batch
-        #     for i in range(o.shape[1]): #looping over sequence length
-        #         o[b][i] = self.out(self.classifier(outs[b][i]))
         
         return o
 
