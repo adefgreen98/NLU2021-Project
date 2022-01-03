@@ -14,8 +14,6 @@ class ATISDataset(torch.utils.data.Dataset):
     __padding_token = '<PAD>'
     __empty_ent = 'O'
 
-    __embedder = None
-
     def __init__(self, path, embedder):
         """
         :param path: path of the .json file containing the dataset.
@@ -25,8 +23,7 @@ class ATISDataset(torch.utils.data.Dataset):
         self._statistics = None
 
         # embedder with vocabulary and tokenizer (for vector conversion)
-        if ATISDataset.__embedder is None:
-            ATISDataset.__embedder = embedder
+        self.embedder = embedder
 
         # retrieve unique entities
         entities = set()
@@ -39,39 +36,51 @@ class ATISDataset(torch.utils.data.Dataset):
         self.tag2idx = {k: i for i, k in enumerate(entities)}
 
         # iterable list of items in the dataset
-        self._seq_items = self.preprocess_items()
+        # self._seq_items = self.preprocess_items()
 
         # populates statistics with preprocessed items
         self._statistics = self.get_statistics()
 
 
     def __getitem__(self, index):
-        return self._seq_items[index]
+        return self._raw[index]
 
     def __len__(self):
-        return len(self._seq_items)
+        return len(self._raw)
     
     
-    def __iter__(self):
-        yield from self._seq_items
-    
-    
-    @staticmethod
-    def collate_ce(batch):
+    def collate_ce(self, batch):
         """
         Returns a batch of sentences padded to be the same length. This is specific for the **cross-entropy** loss function:
         labels will be retrieved as tensors of tag indices for the relative sentence, stacked in a batch.
 
-        *NOTE*: this method expects to receive sentences **alredy padded** to equal length AND already transformed in tensors.
         Inputs:
         :param batch: a list of samples of dimension batch_size (specified by the external DataLoader)
         Returns:
         :param x: a tensor of stacked tensors, each one a sentence (as stacked tensor of embedded tokens)
         :param y: a tensor of stacked tensors for each sentence, containing the label **index** for each token. 
         """
-        x = torch.stack([b[0] for b in batch], dim=0)
-        y = torch.stack([b[1] for b in batch], dim=0)
-        return x,y
+        batch_x = []
+        batch_y = []
+        for b in batch:
+            snt, lab = b["text"], b["entities"]
+            x, y = ATISDataset._align_label(snt, lab)
+            batch_x.append(x)
+            batch_y.append(y)
+        batch_max_len = max([len(sent) for sent in batch_x])
+
+        res_batch_x = []
+        res_batch_y = []
+        for x,y in zip(batch_x, batch_y):
+            x, y = ATISDataset._apply_padding(x, y, batch_max_len)
+            x = torch.stack([torch.tensor(self.embedder.vocab[word].vector) for word in x])
+            y = torch.tensor([self.tag2idx[tag] for tag in y], dtype=torch.uint8)
+            res_batch_x.append(x)
+            res_batch_y.append(y)
+        
+        res_batch_x = torch.stack(res_batch_x, dim=0)
+        res_batch_y = torch.stack(res_batch_y, dim=0)
+        return res_batch_x, res_batch_y
 
 
     def get_statistics(self):
@@ -103,6 +112,8 @@ class ATISDataset(torch.utils.data.Dataset):
         else:
             self._statistics["len_avg"]
 
+
+    ###### NOT USED ######
     def preprocess_items(self):
         """
         Transforms the whole dataset sample by sample to match the required format (i.e. aligned tensor of stacked tokens & list of entity tags).
@@ -114,19 +125,19 @@ class ATISDataset(torch.utils.data.Dataset):
             snt, lab = self._raw[i]["text"], self._raw[i]["entities"] 
             x, y = ATISDataset._align_label(snt, lab)
             x, y = ATISDataset._apply_padding(x, y, self.get_max_sent_length())
-            x = torch.stack([torch.tensor(ATISDataset.__embedder.vocab[word].vector) for word in x])
+            x = torch.stack([torch.tensor(self.embedder.vocab[word].vector) for word in x])
             y = torch.tensor([self.tag2idx[tag] for tag in y]) 
             l[i] = (x, y)
         return l
 
-    @staticmethod
-    def preprocess_single_sentence(sent=None, pad_len=48):
+
+    def preprocess_single_sentence(self, sent=None, pad_len=48):
         """
         Transforms one single sentence in vector format, acceptable by a model.
         Used for model inference.
         """
         x = ATISDataset._preprocess_test_sentence(sent, pad_len)
-        return torch.stack([torch.tensor(ATISDataset.__embedder.vocab[word].vector) for word in x])
+        return torch.stack([torch.tensor(self.embedder.vocab[word].vector) for word in x])
 
 
     #### Private methods ####
@@ -145,9 +156,11 @@ class ATISDataset(torch.utils.data.Dataset):
             
             self._statistics["entities"] = list(self.tag2idx.keys())
 
-            for _, label in self._seq_items:
-                for ent_idx in label:
-                    self._statistics["ent_counts"][self._statistics["entities"][ent_idx]] += 1
+            for sample in self._raw:
+                label = sample["entities"]
+                for tag in label: 
+                    tag_name = tag["entity"]
+                    self._statistics["ent_counts"][tag_name] += 1
         return
 
 
@@ -232,6 +245,11 @@ class ATISSubset(torch.utils.data.Subset):
     A class for easily subsetting an ATISDataset without losing the possibility 
     of keeping a custom collate function (used by the torch DataLoader).
     """
+    
+    # def __init__(self, dataset, indices):
+    #     super(ATISSubset, self).__init__(dataset, indices)
+    #     self.embedder = self.dataset.embedder
+
     def collate_ce(self, batch):
         """Collate function for CrossEntropyLoss."""
         return self.dataset.collate_ce(batch)
