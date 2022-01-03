@@ -17,6 +17,7 @@ from itertools import product
 
 from utils import *
 from nlp_init import get_preprocessor
+from loss import *
 
 def test(net, test_sentence, padder=None):
     print("------------- TEST -------------")
@@ -24,18 +25,6 @@ def test(net, test_sentence, padder=None):
     print(f"""Lengths: Sent = {len(test_sentence.split())} | Inf = {len(test_inference)}""")
     # print(*list(zip(test_sentence.split(), test_inference)), sep='\n')
     print(*list(zip(padder(test_sentence), test_inference)), sep='\n')
-
-
-def simple_inference():
-    nlp = get_preprocessor()
-    dataset = get_dataset('ATIS\\train.json', nlp)
-    labels = dataset.get_labels()
-    net = get_model('gru', labels, nlp.vocab.vectors_length, 50, device='cpu')
-    test_sentence = "i want a morning flight from boston to chicago"
-    inference_embedder_fn = lambda sent: dataset.preprocess_single_sentence(sent, dataset.get_max_sent_length())
-    net.set_embedder(inference_embedder_fn)
-    padder = lambda x: dataset._preprocess_test_sentence(x, pad_len=30)
-    test(net, test_sentence, padder)
 
 
 
@@ -48,8 +37,8 @@ def main(**kwargs):
     labels = dataset.get_labels()
     train_set, valid_set = split_dataset(dataset, valid_ratio=kwargs["valid_ratio"])
     
-    train_dataloader = get_dataloader(train_set, batch_size=kwargs["batch_size"], shuffle=False)
-    eval_dataloader = get_dataloader(valid_set, batch_size=kwargs["batch_size"])
+    train_dataloader = get_dataloader(train_set, batch_size=kwargs["batch_size"], shuffle=False, collate_type='ce')
+    eval_dataloader = get_dataloader(valid_set, batch_size=kwargs["batch_size"], collate_type='ce')
     # test_dataloader = get_dataloader(get_dataset(kwargs["test_path"], nlp), batch_size=1)
     
     net = get_model(kwargs["model"], labels, nlp.vocab.vectors_length, kwargs["hidden_size"], device=get_device())
@@ -67,7 +56,7 @@ def main(**kwargs):
     inference_embedder_fn = lambda sent: dataset.preprocess_single_sentence(sent, dataset.get_max_sent_length())
     net.set_embedder(inference_embedder_fn)
 
-    padder = lambda x: dataset._preprocess_test_sentence(x, pad_len=30)
+    padder = lambda x: dataset._preprocess_test_sentence(x, pad_len=12)
     test(net, test_sentence, padder)
 
 
@@ -82,14 +71,14 @@ def produce_configurations(params):
 
 
 parameters = {
-    "valid_ratio": [0.1],
-    "batch_size": [32],
-    "model": ["lstm"],
-    "loss": ["cross_entropy"],
-    "optimizer": ["sgd"],
-    "hidden_size": [50],
-    "learning_rate": [3e-4],
-    "nr_epochs": [20],
+    "valid_ratio": [0.2],
+    "batch_size": [128],
+    "model": ["gru"],
+    "loss": ["masked_ce"],
+    "optimizer": ["adam"],
+    "hidden_size": [200],
+    "learning_rate": [1e-3],
+    "nr_epochs": [40],
 }
 
 
