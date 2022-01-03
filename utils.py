@@ -4,6 +4,7 @@ import torch
 import torch.nn as nn
 from model import Seq2SeqModel
 from dataset import *
+from loss import *
 
 def get_device():
     return "cuda" if torch.cuda.is_available() else "cpu"
@@ -20,7 +21,7 @@ def get_dataset(path, embedder, name='atis'):
 
 
 """Dataloader"""
-def get_dataloader(dataset, collate_type=None, batch_size=32, num_workers=2, shuffle=False):
+def get_dataloader(dataset, collate_type:str=None, batch_size=32, num_workers=0, shuffle=False):
     _collate_fn = None
     if collate_type == 'ce':
         _collate_fn = dataset.collate_ce
@@ -42,7 +43,9 @@ def get_optimizer(model, lr=0.001, name="adam"):
 
 """Loss function"""
 def get_loss(name):
-    if name == 'cross_entropy': return nn.CrossEntropyLoss()
+    if name == 'ce': return nn.CrossEntropyLoss().to(get_device())
+    elif name == 'masked_ce': return MaskedLoss(nn.CrossEntropyLoss().to(get_device())).to(get_device())
+    else: raise ValueError(f"loss {str(name)} not supported")
 
     
 """Accuracy"""
