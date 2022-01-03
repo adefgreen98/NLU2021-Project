@@ -49,9 +49,7 @@ class Decoder(nn.Module):
         h = self.model(x, h_encoder)
         outs = h[0] #excluding decoder final hidden state
 
-        o = self.out(self.classifier(outs))
-        
-        return o
+        return self.classifier(outs)
 
 """## Seq2Seq
 
@@ -92,11 +90,13 @@ class Seq2SeqModel(nn.Module):
         x = x.to(self.device)
         yt = yt.to(self.device)
         yp = self(x)
+        
+        # storing results before gradienting
+        acc_labels_list = [yp.argmax(dim=-1).flatten().tolist(), yt.flatten().tolist()]
+
         loss = [loss_fn(yp[:, i], yt[:, i]) for i in range(yp.shape[1])]
         loss = torch.stack(loss)
         loss = torch.sum(loss) #TODO: use mean instead of sum?
-
-        acc_labels_list = [yp.argmax(dim=-1).flatten().tolist(), yt.flatten().tolist()]
 
         return loss, acc_labels_list
 
