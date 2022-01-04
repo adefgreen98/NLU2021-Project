@@ -1,3 +1,4 @@
+import os
 import gc
 
 import torch
@@ -42,20 +43,39 @@ def get_optimizer(model, lr=0.001, name="adam"):
 
 
 """Loss function"""
-def get_loss(name):
-    if name == 'ce': return nn.CrossEntropyLoss().to(get_device())
-    elif name == 'masked_ce': return MaskedLoss(nn.CrossEntropyLoss().to(get_device())).to(get_device())
-    else: raise ValueError(f"loss {str(name)} not supported")
+def get_loss(name, dataset):
+    """
+    Returns the chosen loss. The 2nd argument is needed for MaskedLoss instantiation.
+    """
+    if name == 'ce': 
+        return nn.CrossEntropyLoss().to(get_device())
+    elif name == 'masked_ce': 
+        return MaskedLoss(nn.CrossEntropyLoss().to(get_device()), dataset.get_padding_token_index()).to(get_device())
+    else: 
+        raise ValueError(f"loss {str(name)} not supported")
 
     
 """Accuracy"""
-def compute_accuracy(yp, yt, lab2idx):
+def compute_accuracy(yp, yt, lab2idx, normalize=True):
     confusion_matrix = torch.zeros(len(lab2idx), len(lab2idx), dtype=torch.int)
     for i in range(len(yt)): 
         for idx in zip(yt[i], yp[i]):
             confusion_matrix[idx] = confusion_matrix[idx] + 1
-    d = {lab: confusion_matrix[lab2idx[lab], lab2idx[lab]].item() / confusion_matrix[lab2idx[lab]].sum()  for lab in lab2idx}
-    d["total"] = sum(list(d.values())) / len(d)
+
+    # d = {lab: confusion_matrix[lab2idx[lab], lab2idx[lab]].item() / confusion_matrix[lab2idx[lab]].sum()  for lab in lab2idx}
+    
+    idx2lab = {v:k for k,v in lab2idx.items()}
+    tmp = {idx2lab[i]: (v[0], v[1]) for i, v in enumerate(list(zip(confusion_matrix.diag().tolist(), confusion_matrix.sum(dim=-1).tolist())))}
+    
+    if normalize:
+        accuracies = (confusion_matrix.diag() / confusion_matrix.sum(dim=-1)) * (confusion_matrix.sum(dim=-1) / confusion_matrix.sum())
+        d = {lab: accuracies[lab2idx[lab]].item() if not accuracies[lab2idx[lab]].isnan().item() else -1.0 for lab in lab2idx} #excluding NaN results and setting them to -1.0
+        d["total"] = sum([v for v in d.values() if v >= 0]) # mean is obtain thanks to previous weighting
+    else:
+        accuracies = (confusion_matrix.diag() / confusion_matrix.sum(dim=-1))
+        d = {lab: accuracies[lab2idx[lab]].item() if not accuracies[lab2idx[lab]].isnan().item() else -1.0 for lab in lab2idx} #excluding NaN results and setting them to -1.0
+        d["total"] = sum([v for v in d.values() if v >= 0]) / len([v for v in d.values() if v >= 0]) #computing mean excluding negative values
+
     return d
 
 
@@ -127,7 +147,7 @@ def train(nr, model, train_dl, optimizer, loss_fn, valid_dl=None):
             # Saving model as better evaluation
             if metrics['eval']["mean_acc"][e] > best_acc:
                 best_acc = metrics['eval']["mean_acc"][e]
-                torch.save(model, 'checkpoint.pth')
+                # torch.save(model, 'checkpoint.pth')
         else: 
             # Saving model as better metrics in train
             if metrics['train']["mean_acc"][e] > best_acc:
@@ -137,5 +157,31 @@ def train(nr, model, train_dl, optimizer, loss_fn, valid_dl=None):
         print("")
     
     return metrics
+
+
+def test(net, dataset, n=None, fname=None, rnd=True):
+    if n is None: n = len(dataset)
+    
+    if rnd: idxs = torch.randperm(len(dataset))[:n].tolist()
+    else: idxs = range(n)
+
+    if fname is None: 
+        fname = str(max([-1] + [int(i.replace("sentences_", "")[:-4]) for i in filter(lambda name: name.endswith(".txt") and name.startswith("sentences_"), os.listdir('./tests'))]) + 1) + ".txt"
+        fname = "tests/sentences_" + fname
+
+    toprint = []
+    for i in idxs:
+        sent, lab = dataset.get_test_sentence(i)
+        yp = net.run_inference(" ".join(sent[1:-1])) #otherwise duplicating SOS and EOS
+        _str = ""
+        for el in zip(sent, lab, yp):
+            _str += f"{el[0] : ^30}{el[1] : ^30}{el[2] : ^30}\n"
+        toprint.append(_str)
+    
+    with open(fname, 'wt') as f:
+        for s in toprint: 
+            f.write(s)
+            f.write("\n\n")
+
 
 """# Plots"""
