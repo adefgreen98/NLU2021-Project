@@ -19,12 +19,6 @@ from utils import *
 from nlp_init import get_preprocessor
 from loss import *
 
-def test(net, test_sentence, padder=None):
-    print("------------- TEST -------------")
-    test_inference = net.run_inference(test_sentence)
-    print(f"""Lengths: Sent = {len(test_sentence.split())} | Inf = {len(test_inference)}""")
-    # print(*list(zip(test_sentence.split(), test_inference)), sep='\n')
-    print(*list(zip(padder(test_sentence), test_inference)), sep='\n')
 
 
 
@@ -45,19 +39,17 @@ def main(**kwargs):
     
     optimizer = get_optimizer(net, kwargs["learning_rate"], kwargs["optimizer"])
 
-    loss_fn = get_loss(kwargs["loss"])
+    loss_fn = get_loss(kwargs["loss"], dataset)
     
     train(kwargs["nr_epochs"], net, train_dataloader, optimizer, loss_fn, valid_dl=eval_dataloader)
-    
-    # Testing phase
-    test_sentence = "i want a morning flight from boston to chicago"
 
     # building embedder to have just 1 argument, as needed by the model
-    inference_embedder_fn = lambda sent: dataset.preprocess_single_sentence(sent, dataset.get_max_sent_length())
-    net.set_embedder(inference_embedder_fn)
+    # inference_embedder_fn = lambda sent: dataset.preprocess_single_sentence(sent, dataset.get_max_sent_length())
+    # net.set_embedder(inference_embedder_fn)
+    
+    net.set_embedder(dataset.preprocess_single_sentence)
 
-    padder = lambda x: dataset._preprocess_test_sentence(x, pad_len=12)
-    test(net, test_sentence, padder)
+    test(net, valid_set, 10)
 
 
 
@@ -72,21 +64,24 @@ def produce_configurations(params):
 
 parameters = {
     "valid_ratio": [0.2],
-    "batch_size": [128],
+    "batch_size": [64],
     "model": ["gru"],
-    "loss": ["masked_ce"],
+    "loss": ["ce", "masked_ce"],
     "optimizer": ["adam"],
     "hidden_size": [200],
-    "learning_rate": [1e-3],
-    "nr_epochs": [40],
+    "learning_rate": [1e-4],
+    "nr_epochs": [20],
 }
 
 
 if __name__ == '__main__':
 
     for cfg in produce_configurations(parameters):
+        print()
         print("---> Configuration: <---", *[str(k) + ": " + str(v) for k,v in cfg.items()], sep='\n')
         main(train_path = "ATIS/train.json", test_path = "ATIS/test.json", save_path = "", **cfg)
+        print("~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~")
+        print()
 
 
 
