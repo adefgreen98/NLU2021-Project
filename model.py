@@ -43,7 +43,6 @@ class Decoder(nn.Module):
             nn.ReLU()
         ])
         
-        self.out = nn.Softmax(dim=-1) # TODO: tutorial uses LogSoftmax ??
 
     def forward(self, x, h_encoder):
         h = self.model(x, h_encoder)
@@ -74,6 +73,7 @@ class Seq2SeqModel(nn.Module):
 
         self.embedder = None # needed for converting words to vectors during inference
 
+
     # Forward methods
     
     def forward(self, x):
@@ -89,12 +89,20 @@ class Seq2SeqModel(nn.Module):
         x, yt = data
         x = x.to(self.device)
         yt = yt.to(self.device)
-        yp = self(x)
-        
-        # storing results before gradienting
-        acc_labels_list = [yp.argmax(dim=-1).flatten().tolist(), yt.flatten().tolist()]
+        logits = self(x)
 
-        loss = [loss_fn(yp[:, i], yt[:, i]) for i in range(yp.shape[1])]
+        # computing mask for excluding padded tokens from accuracy computation
+        pad_mask = torch.all(x != -1, dim=-1)
+
+        # storing results before gradienting
+        yp = logits.argmax(dim=-1)
+        yp_no_padding = yp[pad_mask].flatten().tolist()
+        yt_no_padding = yt[pad_mask].flatten().tolist()
+        acc_labels_list = [yp_no_padding, yt_no_padding]
+        
+        # acc_labels_list = [yp.argmax(dim=-1).flatten().tolist(), yt.flatten().tolist()]
+
+        loss = [loss_fn(logits[:, i], yt[:, i]) for i in range(yt.shape[1])]
         loss = torch.stack(loss)
         loss = torch.sum(loss) #TODO: use mean instead of sum?
 
@@ -109,12 +117,14 @@ class Seq2SeqModel(nn.Module):
         """
         return sent_probs.argmax(dim=-1).tolist()
     
+
     def convert_label(self, v):
         """
         Converts a sequence of indexes (ordered as the sample sentence) into readable labels.
         """
         return [self.idx2lab[i] for i in v]
     
+
     def run_inference(self, sentence):
         """
         Returns the sequence of predicted tags for a sentence. Only works if an 
@@ -128,6 +138,7 @@ class Seq2SeqModel(nn.Module):
             probs = self.forward(x).squeeze(0)
             # return self.convert_label(self.get_label_idx(probs))[1:len(sentence.split())+1] # excluding EOS, SOS and padding 
             return self.convert_label(self.get_label_idx(probs))
+
 
     def set_embedder(self, embedder):
         """ 

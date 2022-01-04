@@ -30,6 +30,7 @@ class ATISDataset(torch.utils.data.Dataset):
         for data in self._raw:
             for ent in data["entities"]: entities.add(ent["entity"])
         entities.add(ATISDataset.__empty_ent)
+        entities.add(ATISDataset.__padding_token) #needed for masking out padding tokens
         entities = list(entities)
 
         # reverse dict of tag indices
@@ -113,25 +114,7 @@ class ATISDataset(torch.utils.data.Dataset):
             self._statistics["len_avg"]
 
 
-    ###### NOT USED ######
-    def preprocess_items(self):
-        """
-        Transforms the whole dataset sample by sample to match the required format (i.e. aligned tensor of stacked tokens & list of entity tags).
-
-        In future, may also perform other operations (such as augmentation or other transformations).
-        """
-        l = [None for i in range(len(self._raw))]
-        for i in range(len(self._raw)):
-            snt, lab = self._raw[i]["text"], self._raw[i]["entities"] 
-            x, y = ATISDataset._align_label(snt, lab)
-            x, y = ATISDataset._apply_padding(x, y, self.get_max_sent_length())
-            x = torch.stack([torch.tensor(self.embedder.vocab[word].vector) for word in x])
-            y = torch.tensor([self.tag2idx[tag] for tag in y]) 
-            l[i] = (x, y)
-        return l
-
-
-    def preprocess_single_sentence(self, sent=None, pad_len=48):
+    def preprocess_single_sentence(self, sent=None, pad_len=None):
         """
         Transforms one single sentence in vector format, acceptable by a model.
         Used for model inference.
@@ -139,6 +122,20 @@ class ATISDataset(torch.utils.data.Dataset):
         x = ATISDataset._preprocess_test_sentence(sent, pad_len)
         return torch.stack([torch.tensor(self.embedder.vocab[word].vector) for word in x])
 
+
+    def get_test_sentence(self, i):
+        """
+        Retrieves one sample (sentence, tags) from the dataset to be used in testing.
+        :param i: index to retrieve the sample
+        """
+        if i >= len(self): raise IndexError
+        x, y = self._align_label(self[i]["text"], self[i]["entities"])
+        x, y = self._apply_padding(x, y, len(x))
+        return x, y
+    
+    
+    def get_padding_token_index(self):
+        return self.tag2idx[ATISDataset.__padding_token]
 
     #### Private methods ####
 
@@ -210,6 +207,8 @@ class ATISDataset(torch.utils.data.Dataset):
     @staticmethod
     def _apply_padding(sentence, label, pad_size, right_pad=True):
         """
+        NOTE: entities associated with padding tokens are padding tokens themselves, so that
+        they can be recognized and masked out.
         :param sentence: a list containing the tokenized sentence before padding
         :param label: a list containing the tokenwise entity tags
         :param pad_size: dimension that the sentence must reach (without considering added tags!)
@@ -222,20 +221,22 @@ class ATISDataset(torch.utils.data.Dataset):
         if right_pad:
             #right padding
             sentence = [ATISDataset.__sos_token] + sentence + [ATISDataset.__eos_token] + [ATISDataset.__padding_token] * to_pad
-            label = [ATISDataset.__empty_ent] + label + [ATISDataset.__empty_ent] + [ATISDataset.__empty_ent] * to_pad
+            label = [ATISDataset.__empty_ent] + label + [ATISDataset.__empty_ent] + [ATISDataset.__padding_token] * to_pad
         else: 
             #left padding
             sentence = [ATISDataset.__padding_token] * to_pad + [ATISDataset.__sos_token] + sentence + [ATISDataset.__eos_token]
-            label = [ATISDataset.__empty_ent] * to_pad + [ATISDataset.__empty_ent] + label + [ATISDataset.__empty_ent]
+            label = [ATISDataset.__padding_token] * to_pad + [ATISDataset.__empty_ent] + label + [ATISDataset.__empty_ent]
         return sentence, label
 
 
     @staticmethod
-    def _preprocess_test_sentence(sent, pad_len):
+    def _preprocess_test_sentence(sent, pad_len=None):
         """
         Preprocesses (= align and apply padding) a single sentence for the use-case of inference during testing. 
         """
         x, _ = ATISDataset._align_label(sent, [])
+
+        if pad_len is None: pad_len = len(x)
         x, _ = ATISDataset._apply_padding(x, [], pad_len)
         return x
 
@@ -253,6 +254,9 @@ class ATISSubset(torch.utils.data.Subset):
     def collate_ce(self, batch):
         """Collate function for CrossEntropyLoss."""
         return self.dataset.collate_ce(batch)
+    
+    def get_test_sentence(self, i):
+        return self.dataset.get_test_sentence(self.indices[i])
 
 
 def split_dataset(dataset, valid_ratio=0.1):
