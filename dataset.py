@@ -36,9 +36,6 @@ class ATISDataset(torch.utils.data.Dataset):
         # reverse dict of tag indices
         self.tag2idx = {k: i for i, k in enumerate(entities)}
 
-        # iterable list of items in the dataset
-        # self._seq_items = self.preprocess_items()
-
         # populates statistics with preprocessed items
         self._statistics = self.get_statistics()
 
@@ -97,7 +94,7 @@ class ATISDataset(torch.utils.data.Dataset):
         return self._statistics
 
 
-    def get_labels(self):
+    def get_labels_dict(self):
         return self.tag2idx
 
 
@@ -136,6 +133,10 @@ class ATISDataset(torch.utils.data.Dataset):
     
     def get_padding_token_index(self):
         return self.tag2idx[ATISDataset.__padding_token]
+    
+
+    def get_network_embedder(self):
+        return self.preprocess_single_sentence
 
     #### Private methods ####
 
@@ -232,7 +233,7 @@ class ATISDataset(torch.utils.data.Dataset):
     @staticmethod
     def _preprocess_test_sentence(sent, pad_len=None):
         """
-        Preprocesses (= align and apply padding) a single sentence for the use-case of inference during testing. 
+        Preprocesses (= align and apply padding) a single sentence for the use-case of inference during testing, i.e. without labels.
         """
         x, _ = ATISDataset._align_label(sent, [])
 
@@ -257,9 +258,12 @@ class ATISSubset(torch.utils.data.Subset):
     
     def get_test_sentence(self, i):
         return self.dataset.get_test_sentence(self.indices[i])
+    
+    def get_network_embedder(self):
+        return self.dataset.get_network_embedder()
 
 
-def split_dataset(dataset, valid_ratio=0.1):
+def split_dataset(dataset, valid_ratio=0.1, rnd=False):
     """
     Involved in splitting training set and validation set from the original dataset.
     Inputs:
@@ -270,7 +274,7 @@ def split_dataset(dataset, valid_ratio=0.1):
     """
     _idx = list(range(len(dataset)))
     _last = round(len(_idx) * (1 - valid_ratio))
-    shuffle(_idx)
+    if rnd: shuffle(_idx)
     train = ATISSubset(dataset, _idx[:_last])
     valid = ATISSubset(dataset, _idx[_last:])
     return train, valid

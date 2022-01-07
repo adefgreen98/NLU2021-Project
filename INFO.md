@@ -9,3 +9,4 @@
 * Bechét, Raymond (2018) https://hal.inria.fr/hal-01835425/document 
 * https://ieeexplore.ieee.org/stamp/stamp.jsp?tp=&arnumber=6998838 complete DL review
 * https://paperswithcode.com/paper/attention-based-recurrent-neural-network
+* find paper for weighted cross entropy
