@@ -22,34 +22,40 @@ from loss import *
 
 
 
-"""# Main loop"""
+"""# Main method"""
 
-def main(**kwargs):
+def main(cfg, **kwargs):
     nlp = get_preprocessor()
 
+    # DATASET
     dataset = get_dataset(kwargs["train_path"], nlp)
-    labels = dataset.get_labels()
-    train_set, valid_set = split_dataset(dataset, valid_ratio=kwargs["valid_ratio"])
+    labels_dict = dataset.get_labels_dict()
+    train_set, valid_set = split_dataset(dataset, valid_ratio=cfg["valid_ratio"], rnd=False)
     
-    train_dataloader = get_dataloader(train_set, batch_size=kwargs["batch_size"], shuffle=False, collate_type='ce')
-    eval_dataloader = get_dataloader(valid_set, batch_size=kwargs["batch_size"], collate_type='ce')
+    train_dataloader = get_dataloader(train_set, batch_size=cfg["batch_size"], shuffle=True, collate_type='ce')
+    eval_dataloader = get_dataloader(valid_set, batch_size=cfg["batch_size"], collate_type='ce')
     # test_dataloader = get_dataloader(get_dataset(kwargs["test_path"], nlp), batch_size=1)
     
-    net = get_model(kwargs["model"], labels, nlp.vocab.vectors_length, kwargs["hidden_size"], device=get_device())
+    # MODEL & OTHER OBJECTS
+    net = get_model(cfg["model"], labels_dict, nlp.vocab.vectors_length, cfg["hidden_size"], device=get_device())
+    optimizer = get_optimizer(net, cfg["learning_rate"], cfg["optimizer"])
+    loss_fn = get_loss(cfg["loss"], dataset)
     
-    optimizer = get_optimizer(net, kwargs["learning_rate"], kwargs["optimizer"])
+    # TRAINING
+    metrics = train(cfg["nr_epochs"], net, train_dataloader, optimizer, loss_fn, valid_dl=eval_dataloader, greedy_save=True)
 
-    loss_fn = get_loss(kwargs["loss"], dataset)
+    # SAVING
+    _path = 'tests'
+    if kwargs["save"]:
+        _path = save_model(net, cfg)
+        save_training(metrics, _path)
     
-    train(kwargs["nr_epochs"], net, train_dataloader, optimizer, loss_fn, valid_dl=eval_dataloader)
-
-    # building embedder to have just 1 argument, as needed by the model
-    # inference_embedder_fn = lambda sent: dataset.preprocess_single_sentence(sent, dataset.get_max_sent_length())
-    # net.set_embedder(inference_embedder_fn)
-    
+    # TESTING
+    # TODO: automatic embedder setting
     net.set_embedder(dataset.preprocess_single_sentence)
-
-    test(net, valid_set, 10)
+    test_dataset = get_dataset(kwargs["test_path"], nlp)
+    # test(net, test_dataset, save_path=_path)
+    test_beam_search(net, test_dataset)
 
 
 
@@ -66,11 +72,11 @@ parameters = {
     "valid_ratio": [0.2],
     "batch_size": [64],
     "model": ["gru"],
-    "loss": ["ce", "masked_ce"],
+    "loss": ["masked_ce"],
     "optimizer": ["adam"],
     "hidden_size": [200],
     "learning_rate": [1e-4],
-    "nr_epochs": [20],
+    "nr_epochs": [15],
 }
 
 
@@ -79,7 +85,7 @@ if __name__ == '__main__':
     for cfg in produce_configurations(parameters):
         print()
         print("---> Configuration: <---", *[str(k) + ": " + str(v) for k,v in cfg.items()], sep='\n')
-        main(train_path = "ATIS/train.json", test_path = "ATIS/test.json", save_path = "", **cfg)
+        main(cfg, train_path = "ATIS/train.json", test_path = "ATIS/test.json", save=True)
         print("~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~")
         print()
 

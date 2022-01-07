@@ -58,7 +58,7 @@ TODO:
 
 class Seq2SeqModel(nn.Module):
 
-    def __init__(self, unit_name, lab2idx, input_size, num_layers=2, hidden_size=256, device='cuda'):
+    def __init__(self, unit_name, input_size, lab2idx:dict=None, num_layers=2, hidden_size=256, device='cuda'):
         super(Seq2SeqModel, self).__init__()
         self.lab2idx = lab2idx
         self.idx2lab = {idx: lab for lab, idx in lab2idx.items()}
@@ -100,9 +100,8 @@ class Seq2SeqModel(nn.Module):
         yt_no_padding = yt[pad_mask].flatten().tolist()
         acc_labels_list = [yp_no_padding, yt_no_padding]
         
-        # acc_labels_list = [yp.argmax(dim=-1).flatten().tolist(), yt.flatten().tolist()]
-
-        loss = [loss_fn(logits[:, i], yt[:, i]) for i in range(yt.shape[1])]
+        # loss calculation per each item in the sequence (over batch size)
+        loss = [loss_fn(logits[:, i], yt[:, i]) for i in range(yt.shape[1])] #needed <listcomp> because loss does not understand sequence data
         loss = torch.stack(loss)
         loss = torch.sum(loss) #TODO: use mean instead of sum?
 
@@ -131,14 +130,43 @@ class Seq2SeqModel(nn.Module):
         embedder function was previously defined.
         """
         if self.embedder is None:
-            print("Model Error: no embedder function has been set on this model")
-            return None
+            raise RuntimeError("no embedder function has been set for testing this model. Please use the same of the training set.")
         else:
             x = self.embedder(sentence).unsqueeze(0).to(self.device)
             probs = self.forward(x).squeeze(0)
             # return self.convert_label(self.get_label_idx(probs))[1:len(sentence.split())+1] # excluding EOS, SOS and padding 
             return self.convert_label(self.get_label_idx(probs))
 
+
+    def beam_inference(self, sentence, beam_width=5):
+        if self.embedder is None:
+            raise RuntimeError("no embedder function has been set for testing this model. Please use the same of the training set.")
+        else:
+            x = self.embedder(sentence).unsqueeze(0).to(self.device)
+            probs = self.forward(x).squeeze(0)
+
+            # initializes beam scores
+            init_beam = probs[0].sort(descending=True)
+            beam = {"score": init_beam[0][:beam_width], "seq": [[el] for el in init_beam[1][:beam_width].tolist()]}
+
+            # looping along sequence length
+            for i in range(1, probs.shape[0]):
+                curr_scores = probs[i]
+                new_indices = torch.arange(curr_scores.shape[0])
+                
+                combination_matrix = beam["score"].view(-1,1) * curr_scores
+
+                best_combinations = combination_matrix.flatten().argsort(descending=True)[:beam_width]
+                x,y = best_combinations // new_indices.shape[0], best_combinations % new_indices.shape[0]
+
+                beam["score"] = combination_matrix[x,y]
+                beam["seq"] = [beam["seq"][xi] + [new_indices[yi].item()] for xi, yi in zip(x.tolist(),y.tolist())] #selecting only winning combinations
+            
+            return [self.convert_label(seq) for seq in beam["seq"]], beam["score"].tolist()
+
+
+
+    # Others
 
     def set_embedder(self, embedder):
         """ 

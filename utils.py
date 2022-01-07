@@ -1,8 +1,11 @@
 import os
+import shutil
 import gc
 
+import pandas as pd
 import torch
 import torch.nn as nn
+
 from model import Seq2SeqModel
 from dataset import *
 from loss import *
@@ -30,8 +33,11 @@ def get_dataloader(dataset, collate_type:str=None, batch_size=32, num_workers=0,
 
 
 """Model"""
-def get_model(model_type, labels, input_size, hidden_size=256, device='cuda'):
-    return Seq2SeqModel(model_type, labels, input_size, hidden_size=hidden_size, device=device).to(device)
+def get_model(model_type, labels_dict, input_size, hidden_size=256, device='cuda'):
+    return Seq2SeqModel(model_type, input_size, lab2idx=labels_dict, hidden_size=hidden_size, device=device).to(device)
+
+def load_model(path):
+    return torch.load(path)
 
 
 """Optimizer"""
@@ -55,8 +61,8 @@ def get_loss(name, dataset):
         raise ValueError(f"loss {str(name)} not supported")
 
     
-"""Accuracy"""
-def compute_accuracy(yp, yt, lab2idx, normalize=True):
+"""# Metrics"""
+def compute_accuracy(yp, yt, lab2idx, weigh_classes=True):
     confusion_matrix = torch.zeros(len(lab2idx), len(lab2idx), dtype=torch.int)
     for i in range(len(yt)): 
         for idx in zip(yt[i], yp[i]):
@@ -64,10 +70,12 @@ def compute_accuracy(yp, yt, lab2idx, normalize=True):
 
     # d = {lab: confusion_matrix[lab2idx[lab], lab2idx[lab]].item() / confusion_matrix[lab2idx[lab]].sum()  for lab in lab2idx}
     
+    ## Needed for debug ##
     idx2lab = {v:k for k,v in lab2idx.items()}
     tmp = {idx2lab[i]: (v[0], v[1]) for i, v in enumerate(list(zip(confusion_matrix.diag().tolist(), confusion_matrix.sum(dim=-1).tolist())))}
-    
-    if normalize:
+    ## ##
+
+    if weigh_classes:
         accuracies = (confusion_matrix.diag() / confusion_matrix.sum(dim=-1)) * (confusion_matrix.sum(dim=-1) / confusion_matrix.sum())
         d = {lab: accuracies[lab2idx[lab]].item() if not accuracies[lab2idx[lab]].isnan().item() else -1.0 for lab in lab2idx} #excluding NaN results and setting them to -1.0
         d["total"] = sum([v for v in d.values() if v >= 0]) # mean is obtain thanks to previous weighting
@@ -79,7 +87,7 @@ def compute_accuracy(yp, yt, lab2idx, normalize=True):
     return d
 
 
-"""Templates for train, validate & test:"""
+"""# Templates for train, validate & test:"""
 def iterate(model, dataloader, optimizer, loss_fn, mode):
     if mode == 'train': model.train()
     else: model.eval()
@@ -124,7 +132,7 @@ def epoch(model, dataloader, optimizer, loss_fn, mode):
     return mean_loss, global_acc["total"]
 
 
-def train(nr, model, train_dl, optimizer, loss_fn, valid_dl=None):
+def train(nr, model, train_dl, optimizer, loss_fn, valid_dl=None, greedy_save=False):
     
     metrics = {}
     metrics["train"] = {"mean_loss": torch.zeros(nr, dtype=torch.float), "mean_acc": torch.zeros(nr, dtype=torch.float)}
@@ -145,37 +153,47 @@ def train(nr, model, train_dl, optimizer, loss_fn, valid_dl=None):
             print(f"""{'eval'} : loss = {metrics['eval']["mean_loss"][e].item()} | accuracy = {metrics['eval']["mean_acc"][e].item()}""")
 
             # Saving model as better evaluation
-            if metrics['eval']["mean_acc"][e] > best_acc:
-                best_acc = metrics['eval']["mean_acc"][e]
-                # torch.save(model, 'checkpoint.pth')
+            if greedy_save:
+                if metrics['eval']["mean_acc"][e] > best_acc:
+                    best_acc = metrics['eval']["mean_acc"][e]
+                    torch.save(model, 'checkpoint.pth')
         else: 
             # Saving model as better metrics in train
-            if metrics['train']["mean_acc"][e] > best_acc:
-                best_acc = metrics['train']["mean_acc"][e]
-                torch.save(model, 'checkpoint.pth')
+            if greedy_save:
+                if metrics['train']["mean_acc"][e] > best_acc:
+                    best_acc = metrics['train']["mean_acc"][e]
+                    torch.save(model, 'checkpoint.pth')
                 
         print("")
     
     return metrics
 
 
-def test(net, dataset, n=None, fname=None, rnd=True):
-    if n is None: n = len(dataset)
+
+
+def test(net, dataset, nr_sentences=None, save_path='tests', fname=None, rnd=True):
+
+    # set embedder for model
+    net.eval() 
+    net.set_embedder(dataset.get_network_embedder())
+
+    if nr_sentences is None: nr_sentences = len(dataset)
     
-    if rnd: idxs = torch.randperm(len(dataset))[:n].tolist()
-    else: idxs = range(n)
+    if rnd: idxs = torch.randperm(len(dataset))[:nr_sentences].tolist()
+    else: idxs = range(nr_sentences)
 
     if fname is None: 
         fname = str(max([-1] + [int(i.replace("sentences_", "")[:-4]) for i in filter(lambda name: name.endswith(".txt") and name.startswith("sentences_"), os.listdir('./tests'))]) + 1) + ".txt"
-        fname = "tests/sentences_" + fname
-
+        fname = "sentences_" + fname
+    fname = os.path.join(save_path, fname)
+    
     toprint = []
     for i in idxs:
         sent, lab = dataset.get_test_sentence(i)
         yp = net.run_inference(" ".join(sent[1:-1])) #otherwise duplicating SOS and EOS
         _str = ""
-        for el in zip(sent, lab, yp):
-            _str += f"{el[0] : ^30}{el[1] : ^30}{el[2] : ^30}\n"
+        for el in zip(sentence, label, yp):
+            _str += f"{el[0] : <30}{el[1] : ^30}{el[2] : ^30}\n"
         toprint.append(_str)
     
     with open(fname, 'wt') as f:
@@ -184,4 +202,49 @@ def test(net, dataset, n=None, fname=None, rnd=True):
             f.write("\n\n")
 
 
+def test_beam_search(net, dataset, nr_sentences=5, beam_width=5, rnd=True):
+    if nr_sentences is None: nr_sentences = len(dataset)
+    if rnd: idxs = torch.randperm(len(dataset))[:nr_sentences].tolist()
+    else: idxs = range(nr_sentences)
+
+    for i in idxs:
+        print("+++++++++++++++++++++++++++++++++++")
+        sent, lab = dataset.get_test_sentence(i)
+        beam, score = net.beam_inference(" ".join(sent[1:-1])) #otherwise duplicating SOS and EOS
+        _str = f"{'Sentence' : <25}{'Label' : ^25}" + "".join([f"{'Score ' + str(score[i]) : ^25}" for i in range(len(score))]) + "\n"
+        for i in range(len(sent)):
+            _str += f"{sent[i] : <25}{lab[i] : ^25}" + "".join([f"{beam[j][i] : ^25}" for j in range(len(beam))]) + "\n"
+        print(_str)
+        print("")
+
+
 """# Plots"""
+
+
+"""# Saves"""
+
+def save_model(model, configuration:dict):
+    dirname = ";".join([str(k) + "=" + str(v) for k,v in configuration.items()])
+    dirname = os.path.join("models", dirname)
+    if os.path.exists(dirname): shutil.rmtree(dirname)
+    os.mkdir(dirname)
+
+    # automatically detects if there is a better checkpoint already
+    model_path = os.path.join(dirname, "model.pth")
+    if os.path.exists('./checkpoint.pth'): shutil.move('./checkpoint.pth', model_path)
+    else: torch.save(model, model_path)
+    
+    return dirname
+
+
+def save_training(metrics:dict, path):
+    """
+    Saves training metrics history as a .csv file (so that it can be easily graphed).
+    The .csv will contain one row for each epoch, and columns will represent different metrics at that point.
+    :param metrics: a dictionary associating metric name to the list of values it scored for each epoch
+    :param path: path of parent directory where the file will be saved (i.e. experiment directory)
+    """
+    #TODO: insert training / validation metrics
+    for mode in ['train', 'eval']:
+        mode_metric = {k: v.detach().numpy() for k,v in metrics[mode].items()}
+        pd.DataFrame.from_dict(mode_metric).to_csv(os.path.join(path, f"{mode}.csv"))
