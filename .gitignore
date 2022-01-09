@@ -1,5 +1,6 @@
 __pycache__
-ATIS
+atis
+iob_atis
 .vscode
 tests
 models
