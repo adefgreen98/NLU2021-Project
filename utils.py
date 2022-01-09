@@ -7,8 +7,11 @@ import torch
 import torch.nn as nn
 
 from model import Seq2SeqModel
-from dataset import *
+
+from dataset import ATISDataset
+
 from loss import *
+from embedder import Embedder
 
 def get_device():
     return "cuda" if torch.cuda.is_available() else "cpu"
@@ -16,28 +19,44 @@ def get_device():
 """# Getters"""
 
 """Dataset"""
-def get_dataset(path, embedder, name='atis'):
+def get_dataset(path, name='atis'):
     """
     Prepares the dataset with the specified name. Currently supported:
     - 'atis': ATIS dataset 
     """
-    if name == 'atis': return ATISDataset(path, embedder)
+    if name == 'atis': return ATISDataset(path)
+
+def split_dataset(dataset, valid_ratio=0.1, rnd=False):
+    """
+    Involved in splitting training set and validation set from the original dataset.
+    Inputs:
+    :param ratio: percentage of samples to put in validation set
+    Outputs:
+    :param training_set: torch.utils.data.Subset containing samples for training
+    :param valid_set: same as training_set, but with samples for evaluation
+    """
+    _idx = list(range(len(dataset)))
+    _last = round(len(_idx) * (1 - valid_ratio))
+    if rnd: shuffle(_idx)
+    train = torch.utils.data.Subset(dataset, _idx[:_last])
+    valid = torch.utils.data.Subset(dataset, _idx[_last:])
+    return train, valid
 
 
 """Dataloader"""
 def get_dataloader(dataset, collate_type:str=None, batch_size=32, num_workers=0, shuffle=False):
     _collate_fn = None
     if collate_type == 'ce':
-        _collate_fn = dataset.collate_ce
+        _collate_fn = Embedder.collate_ce
     return torch.utils.data.DataLoader(dataset, num_workers=num_workers, batch_size=batch_size, collate_fn=_collate_fn, shuffle=shuffle)
 
 
 """Model"""
-def get_model(model_type, labels_dict, input_size, hidden_size=256, device='cuda'):
-    return Seq2SeqModel(model_type, input_size, lab2idx=labels_dict, hidden_size=hidden_size, device=device).to(device)
+def get_model(embedder, model_type, hidden_size=256, device='cuda'):
+    return Seq2SeqModel(embedder, model_type, hidden_size=hidden_size, device=device).to(device)
 
 def load_model(path):
-    return torch.load(path)
+    raise NotImplementedError("still to understand how to load state dict without access to model information")
 
 
 """Optimizer"""
@@ -49,14 +68,14 @@ def get_optimizer(model, lr=0.001, name="adam"):
 
 
 """Loss function"""
-def get_loss(name, dataset):
+def get_loss(name, embedder):
     """
     Returns the chosen loss. The 2nd argument is needed for MaskedLoss instantiation.
     """
     if name == 'ce': 
         return nn.CrossEntropyLoss().to(get_device())
     elif name == 'masked_ce': 
-        return MaskedLoss(nn.CrossEntropyLoss().to(get_device()), dataset.get_padding_token_index()).to(get_device())
+        return MaskedLoss(nn.CrossEntropyLoss().to(get_device()), embedder.get_padding_token_index()).to(get_device())
     else: 
         raise ValueError(f"loss {str(name)} not supported")
 
@@ -123,7 +142,7 @@ def epoch(model, dataloader, optimizer, loss_fn, mode):
 
     loss_history, acc_history = iterate(model, dataloader, optimizer, loss_fn, mode)
     mean_loss = loss_history.mean()
-    global_acc = compute_accuracy(*acc_history, model.lab2idx) #here using list of all outputs from each batch
+    global_acc = compute_accuracy(*acc_history, model.embedder.tag2idx) #here using list of all outputs from each batch
 
     del loss_history, acc_history
     gc.collect()
@@ -156,13 +175,13 @@ def train(nr, model, train_dl, optimizer, loss_fn, valid_dl=None, greedy_save=Fa
             if greedy_save:
                 if metrics['eval']["mean_acc"][e] > best_acc:
                     best_acc = metrics['eval']["mean_acc"][e]
-                    torch.save(model, 'checkpoint.pth')
+                    torch.save(model.state_dict(), 'checkpoint.pth')
         else: 
             # Saving model as better metrics in train
             if greedy_save:
                 if metrics['train']["mean_acc"][e] > best_acc:
                     best_acc = metrics['train']["mean_acc"][e]
-                    torch.save(model, 'checkpoint.pth')
+                    torch.save(model.state_dict(), 'checkpoint.pth')
                 
         print("")
     
@@ -171,52 +190,66 @@ def train(nr, model, train_dl, optimizer, loss_fn, valid_dl=None, greedy_save=Fa
 
 
 
-def test(net, dataset, nr_sentences=None, save_path='tests', fname=None, rnd=True):
+def test(model, dataset, nr_sentences=None, save_path='tests', fname=None, rnd=True):
 
-    # set embedder for model
-    net.eval() 
-    net.set_embedder(dataset.get_network_embedder())
+    model.eval() 
 
     if nr_sentences is None: nr_sentences = len(dataset)
     
     if rnd: idxs = torch.randperm(len(dataset))[:nr_sentences].tolist()
     else: idxs = range(nr_sentences)
 
-    if fname is None: 
-        fname = str(max([-1] + [int(i.replace("sentences_", "")[:-4]) for i in filter(lambda name: name.endswith(".txt") and name.startswith("sentences_"), os.listdir('./tests'))]) + 1) + ".txt"
-        fname = "sentences_" + fname
+    if fname is None: fname = "greedy.txt"
     fname = os.path.join(save_path, fname)
     
     toprint = []
     for i in idxs:
-        sent, lab = dataset.get_test_sentence(i)
-        yp = net.run_inference(" ".join(sent[1:-1])) #otherwise duplicating SOS and EOS
+        sent, lab = dataset[i]
+        yp = model.run_inference(sent)
+
+        s, l = model.embedder.get_test_sentence(sent, lab) #regularize with SOS, EOS for printing
         _str = ""
-        for el in zip(sentence, label, yp):
-            _str += f"{el[0] : <30}{el[1] : ^30}{el[2] : ^30}\n"
+        for el in zip(s, l, yp):
+            _str += f"{el[0] : <15}{el[1] : ^30}{el[2] : ^30}\n"
         toprint.append(_str)
     
     with open(fname, 'wt') as f:
-        for s in toprint: 
+        for i, s in enumerate(toprint): 
+            if i < 5: print(s)
             f.write(s)
             f.write("\n\n")
 
 
-def test_beam_search(net, dataset, nr_sentences=5, beam_width=5, rnd=True):
+def test_beam_search(net, dataset, nr_sentences=None, beam_width=5, save_path='tests', fname=None, rnd=True):
+    
+    net.eval()
+
     if nr_sentences is None: nr_sentences = len(dataset)
     if rnd: idxs = torch.randperm(len(dataset))[:nr_sentences].tolist()
     else: idxs = range(nr_sentences)
 
-    for i in idxs:
-        print("+++++++++++++++++++++++++++++++++++")
-        sent, lab = dataset.get_test_sentence(i)
-        beam, score = net.beam_inference(" ".join(sent[1:-1])) #otherwise duplicating SOS and EOS
-        _str = f"{'Sentence' : <25}{'Label' : ^25}" + "".join([f"{'Score ' + str(score[i]) : ^25}" for i in range(len(score))]) + "\n"
-        for i in range(len(sent)):
-            _str += f"{sent[i] : <25}{lab[i] : ^25}" + "".join([f"{beam[j][i] : ^25}" for j in range(len(beam))]) + "\n"
-        print(_str)
-        print("")
+    if fname is None:  fname = "beam.txt"
+    fname = os.path.join(save_path, fname)
 
+    toprint = []
+    for i in idxs:
+        _str = "++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++\n"
+        sent, lab = dataset[i]
+        beam, score = net.beam_inference(sent) 
+        
+        sent, lab = net.embedder.get_test_sentence(sent, lab) #regularize with SOS, EOS for printing
+        _str += f"{'Sentence' : <15}{'Label' : ^30}" + "".join([f"{'Score ' + str(score[i]) : ^30}" for i in range(len(score))]) + "\n"
+        _str += "---------------------------------------------------------------------------------\n"
+        for i in range(len(sent)):
+            _str += f"{sent[i] : <15}{lab[i] : ^30}" + "".join([f"{beam[j][i] : ^30}" for j in range(len(beam))]) + "\n"
+        _str += "\n"
+        toprint.append(_str)
+
+    with open(fname, 'wt') as f:
+        for i, s in enumerate(toprint): 
+            if i < 5: print(s)
+            f.write(s)
+            f.write("\n\n")
 
 """# Plots"""
 
@@ -232,7 +265,7 @@ def save_model(model, configuration:dict):
     # automatically detects if there is a better checkpoint already
     model_path = os.path.join(dirname, "model.pth")
     if os.path.exists('./checkpoint.pth'): shutil.move('./checkpoint.pth', model_path)
-    else: torch.save(model, model_path)
+    else: torch.save(model.state_dict(), model_path)
     
     return dirname
 

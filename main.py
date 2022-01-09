@@ -16,33 +16,28 @@ Original file is located at
 from itertools import product
 
 from utils import *
-from nlp_init import get_preprocessor
 from loss import *
-
-
 
 
 """# Main method"""
 
 def main(cfg, **kwargs):
-    nlp = get_preprocessor()
 
     # DATASET
-    dataset = get_dataset(kwargs["train_path"], nlp)
-    labels_dict = dataset.get_labels_dict()
+    dataset = get_dataset(kwargs["train_path"])
     train_set, valid_set = split_dataset(dataset, valid_ratio=cfg["valid_ratio"], rnd=False)
     
     train_dataloader = get_dataloader(train_set, batch_size=cfg["batch_size"], shuffle=True, collate_type='ce')
-    eval_dataloader = get_dataloader(valid_set, batch_size=cfg["batch_size"], collate_type='ce')
-    # test_dataloader = get_dataloader(get_dataset(kwargs["test_path"], nlp), batch_size=1)
+    valid_dataloader = get_dataloader(valid_set, batch_size=cfg["batch_size"], collate_type='ce')
     
     # MODEL & OTHER OBJECTS
-    net = get_model(cfg["model"], labels_dict, nlp.vocab.vectors_length, cfg["hidden_size"], device=get_device())
+    embedder = Embedder(kwargs["train_path"])
+    net = get_model(embedder, cfg["model"], cfg["hidden_size"], device=get_device())
     optimizer = get_optimizer(net, cfg["learning_rate"], cfg["optimizer"])
-    loss_fn = get_loss(cfg["loss"], dataset)
+    loss_fn = get_loss(cfg["loss"], embedder)
     
     # TRAINING
-    metrics = train(cfg["nr_epochs"], net, train_dataloader, optimizer, loss_fn, valid_dl=eval_dataloader, greedy_save=True)
+    metrics = train(cfg["nr_epochs"], net, train_dataloader, optimizer, loss_fn, valid_dl=valid_dataloader, greedy_save=True)
 
     # SAVING
     _path = 'tests'
@@ -51,11 +46,10 @@ def main(cfg, **kwargs):
         save_training(metrics, _path)
     
     # TESTING
-    # TODO: automatic embedder setting
-    net.set_embedder(dataset.preprocess_single_sentence)
-    test_dataset = get_dataset(kwargs["test_path"], nlp)
-    # test(net, test_dataset, save_path=_path)
-    test_beam_search(net, test_dataset)
+    test_dataset = get_dataset(kwargs["test_path"])
+    
+    test(net, test_dataset, save_path=_path)
+    test_beam_search(net, test_dataset, save_path=_path)
 
 
 
@@ -75,7 +69,7 @@ parameters = {
     "loss": ["masked_ce"],
     "optimizer": ["adam"],
     "hidden_size": [200],
-    "learning_rate": [1e-4],
+    "learning_rate": [1e-3],
     "nr_epochs": [15],
 }
 
@@ -85,7 +79,7 @@ if __name__ == '__main__':
     for cfg in produce_configurations(parameters):
         print()
         print("---> Configuration: <---", *[str(k) + ": " + str(v) for k,v in cfg.items()], sep='\n')
-        main(cfg, train_path = "ATIS/train.json", test_path = "ATIS/test.json", save=True)
+        main(cfg, train_path = "iob_atis/atis.train.pkl", test_path = "iob_atis/atis.test.pkl", save=True)
         print("~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~")
         print()
 

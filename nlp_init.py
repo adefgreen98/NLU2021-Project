@@ -18,10 +18,10 @@ def get_preprocessor():
     except ModuleNotFoundError: nlp = spacy.load('en') 
 
     nlp.tokenizer.add_special_case("<EOS>", [{spacy.symbols.ORTH: "<EOS>"}])
-    nlp.tokenizer.add_special_case("<SOS>", [{spacy.symbols.ORTH: "<SOS>"}])
+    nlp.tokenizer.add_special_case("<BOS>", [{spacy.symbols.ORTH: "<BOS>"}])
     nlp.tokenizer.add_special_case("<PAD>", [{spacy.symbols.ORTH: "<PAD>"}])
      
-    v = np.ones_like(nlp.vocab['<SOS>'].vector) * -1
+    v = np.ones_like(nlp.vocab['<BOS>'].vector) * -1
     nlp.vocab.set_vector("<PAD>", v)
 
     return nlp
