@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+from torch.nn.functional import softmax
 
 """# Sequence Model
 
@@ -58,20 +59,17 @@ TODO:
 
 class Seq2SeqModel(nn.Module):
 
-    def __init__(self, unit_name, input_size, lab2idx:dict=None, num_layers=2, hidden_size=256, device='cuda'):
+    def __init__(self, embedder, unit_name, num_layers=2, hidden_size=256, device='cuda'):
         super(Seq2SeqModel, self).__init__()
-        self.lab2idx = lab2idx
-        self.idx2lab = {idx: lab for lab, idx in lab2idx.items()}
+        
+        self.embedder = embedder # needed for converting words to vectors during inference
+
         self.device = device
-        
-        output_size = len(self.lab2idx)
-        
-        self.input_size = input_size
+        self.input_size = self.embedder.get_embedding_size()
+        self.output_size = len(self.embedder.get_entities())
 
-        self.encoder = Encoder(input_size, hidden_size=hidden_size, num_layers=num_layers, unit=unit_name).to(device)
-        self.decoder = Decoder(input_size, output_size, hidden_size=hidden_size, num_layers=num_layers, unit=unit_name).to(device)
-
-        self.embedder = None # needed for converting words to vectors during inference
+        self.encoder = Encoder(self.input_size, hidden_size=hidden_size, num_layers=num_layers, unit=unit_name).to(device)
+        self.decoder = Decoder(self.input_size, self.output_size, hidden_size=hidden_size, num_layers=num_layers, unit=unit_name).to(device)
 
 
     # Forward methods
@@ -87,8 +85,11 @@ class Seq2SeqModel(nn.Module):
     
     def process_batch(self, data, loss_fn):
         x, yt = data
+        x, yt = self.embedder(x, yt, _batch=True)
+
         x = x.to(self.device)
         yt = yt.to(self.device)
+        
         logits = self(x)
 
         # computing mask for excluding padded tokens from accuracy computation
@@ -121,13 +122,12 @@ class Seq2SeqModel(nn.Module):
         """
         Converts a sequence of indexes (ordered as the sample sentence) into readable labels.
         """
-        return [self.idx2lab[i] for i in v]
+        return [self.embedder.idx2tag[i] for i in v]
     
 
     def run_inference(self, sentence):
         """
-        Returns the sequence of predicted tags for a sentence. Only works if an 
-        embedder function was previously defined.
+        Returns the sequence of predicted tags for a sentence. 
         """
         if self.embedder is None:
             raise RuntimeError("no embedder function has been set for testing this model. Please use the same of the training set.")
@@ -143,7 +143,7 @@ class Seq2SeqModel(nn.Module):
             raise RuntimeError("no embedder function has been set for testing this model. Please use the same of the training set.")
         else:
             x = self.embedder(sentence).unsqueeze(0).to(self.device)
-            probs = self.forward(x).squeeze(0)
+            probs = softmax(self.forward(x).squeeze(0), dim=-1)
 
             # initializes beam scores
             init_beam = probs[0].sort(descending=True)
@@ -157,7 +157,7 @@ class Seq2SeqModel(nn.Module):
                 combination_matrix = beam["score"].view(-1,1) * curr_scores
 
                 best_combinations = combination_matrix.flatten().argsort(descending=True)[:beam_width]
-                x,y = best_combinations // new_indices.shape[0], best_combinations % new_indices.shape[0]
+                x,y = torch.div(best_combinations, new_indices.shape[0], rounding_mode='trunc'), best_combinations % new_indices.shape[0]
 
                 beam["score"] = combination_matrix[x,y]
                 beam["seq"] = [beam["seq"][xi] + [new_indices[yi].item()] for xi, yi in zip(x.tolist(),y.tolist())] #selecting only winning combinations
