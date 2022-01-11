@@ -12,6 +12,7 @@ from dataset import ATISDataset
 
 from loss import *
 from embedder import Embedder
+from conlleval import evaluate as conll_evaluate
 
 def get_device():
     return "cuda" if torch.cuda.is_available() else "cpu"
@@ -52,8 +53,8 @@ def get_dataloader(dataset, collate_type:str=None, batch_size=32, num_workers=0,
 
 
 """Model"""
-def get_model(embedder, model_type, hidden_size=256, device='cuda'):
-    return Seq2SeqModel(embedder, model_type, hidden_size=hidden_size, device=device).to(device)
+def get_model(embedder, **model_params):
+    return Seq2SeqModel(embedder, **model_params).to(get_device())
 
 def load_model(path):
     raise NotImplementedError("still to understand how to load state dict without access to model information")
@@ -63,7 +64,7 @@ def load_model(path):
 def get_optimizer(model, lr=0.001, name="adam"):
     if name == 'adam': return torch.optim.Adam(model.parameters(), lr)
     elif name == 'sgd': return torch.optim.SGD(model.parameters(), lr)
-    elif name == 'adamw': return torch.optim.AdamW(model.parameters, lr)
+    elif name == 'adamw': return torch.optim.AdamW(model.parameters(), lr)
     else: raise RuntimeError("unexpected optimizer name " + str(name))
 
 
@@ -203,19 +204,32 @@ def test(model, dataset, nr_sentences=None, save_path='tests', fname=None, rnd=T
     fname = os.path.join(save_path, fname)
     
     toprint = []
+    true_seqs = []
+    pred_seqs = []
     for i in idxs:
         sent, lab = dataset[i]
         yp = model.run_inference(sent)
 
-        s, l = model.embedder.get_test_sentence(sent, lab) #regularize with SOS, EOS for printing
+        s, l = model.embedder.get_test_sentence(sent, lab) #regularize with SOS, EOS for printing & testing
+        
+        true_seqs.extend(l)
+        pred_seqs.extend(yp)
+
         _str = ""
         for el in zip(s, l, yp):
             _str += f"{el[0] : <15}{el[1] : ^30}{el[2] : ^30}\n"
         toprint.append(_str)
     
+    result = conll_evaluate(true_seqs, pred_seqs, verbose=False)
+    print("------------------ TEST RESULT ------------------")
+    print("accuracy (non-'O') = {:.4f} | accuracy = {:.4f} | precision = {:.4f}  |  recall = {:.4f}  |  f1 = {:.4f}".format(*result))
+    print("-------------------------------------------------")
+    
     with open(fname, 'wt') as f:
+        f.write(" ".join([str(el) for el in result]) + "\n")
+        f.write("\n")
         for i, s in enumerate(toprint): 
-            if i < 5: print(s)
+            # if i < 5: print(s)
             f.write(s)
             f.write("\n\n")
 
@@ -244,10 +258,11 @@ def test_beam_search(net, dataset, nr_sentences=None, beam_width=5, save_path='t
             _str += f"{sent[i] : <15}{lab[i] : ^30}" + "".join([f"{beam[j][i] : ^30}" for j in range(len(beam))]) + "\n"
         _str += "\n"
         toprint.append(_str)
-
+    
+    #TODO: how to compute metrics when we have multiple results? maybe the most correct in the beam?
+    
     with open(fname, 'wt') as f:
         for i, s in enumerate(toprint): 
-            if i < 5: print(s)
             f.write(s)
             f.write("\n\n")
 
@@ -257,7 +272,7 @@ def test_beam_search(net, dataset, nr_sentences=None, beam_width=5, save_path='t
 """# Saves"""
 
 def save_model(model, configuration:dict):
-    dirname = ";".join([str(k) + "=" + str(v) for k,v in configuration.items()])
+    dirname = ";".join([str(k) + "=" + str(v) for k,v in configuration.items() if k != 'model_params'] + [str(k) + "=" + str(v) for k,v in configuration['model_params'].items()])
     dirname = os.path.join("models", dirname)
     if os.path.exists(dirname): shutil.rmtree(dirname)
     os.mkdir(dirname)
