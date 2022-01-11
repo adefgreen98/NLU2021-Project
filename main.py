@@ -26,13 +26,15 @@ def main(cfg, **kwargs):
     # DATASET
     dataset = get_dataset(kwargs["train_path"])
     train_set, valid_set = split_dataset(dataset, valid_ratio=cfg["valid_ratio"], rnd=False)
+    test_dataset = get_dataset(kwargs["test_path"])
+    if cfg["valid_ratio"] == 0: valid_set = test_dataset
     
     train_dataloader = get_dataloader(train_set, batch_size=cfg["batch_size"], shuffle=True, collate_type='ce')
     valid_dataloader = get_dataloader(valid_set, batch_size=cfg["batch_size"], collate_type='ce')
     
     # MODEL & OTHER OBJECTS
     embedder = Embedder(kwargs["train_path"])
-    net = get_model(embedder, cfg["model"], cfg["hidden_size"], device=get_device())
+    net = get_model(embedder, **cfg["model_params"], device=get_device())
     optimizer = get_optimizer(net, cfg["learning_rate"], cfg["optimizer"])
     loss_fn = get_loss(cfg["loss"], embedder)
     
@@ -46,33 +48,35 @@ def main(cfg, **kwargs):
         save_training(metrics, _path)
     
     # TESTING
-    test_dataset = get_dataset(kwargs["test_path"])
-    
     test(net, test_dataset, save_path=_path)
     test_beam_search(net, test_dataset, save_path=_path)
 
 
 
 def produce_configurations(params):
-    param_names = list(params.keys())
-    configurations = product(*list(params.values()))
+    tmp = params.copy()
+    param_names = list(tmp.keys())
+    if 'model_params' in tmp: tmp["model_params"] = list(produce_configurations(tmp["model_params"]))
+    configurations = product(*list(tmp.values()))
 
     for cfg in configurations:
         yield {k: v for k, v in zip(param_names, cfg)}
 
 
-
 parameters = {
-    "valid_ratio": [0.2],
+    "valid_ratio": [0],
     "batch_size": [64],
-    "model": ["gru"],
     "loss": ["masked_ce"],
-    "optimizer": ["adam"],
-    "hidden_size": [200],
+    "optimizer": ["adam", "adamw"],
     "learning_rate": [1e-3],
     "nr_epochs": [15],
+    "model_params": {
+        "unit_name": ["gru"],
+        "hidden_size": [200],
+        "num_layers": [2],
+        "dropout_p": [0.0, 0.5]
+    }
 }
-
 
 if __name__ == '__main__':
 

@@ -59,16 +59,16 @@ TODO:
 
 class Seq2SeqModel(nn.Module):
 
-    def __init__(self, embedder, unit_name, num_layers=2, hidden_size=256, device='cuda'):
+    def __init__(self, embedder, unit_name='gru', num_layers=2, hidden_size=256, dropout_p=0.0, device='cuda'):
         super(Seq2SeqModel, self).__init__()
         
         self.embedder = embedder # needed for converting words to vectors during inference
-
         self.device = device
         self.input_size = self.embedder.get_embedding_size()
         self.output_size = len(self.embedder.get_entities())
 
         self.encoder = Encoder(self.input_size, hidden_size=hidden_size, num_layers=num_layers, unit=unit_name).to(device)
+        self.hidden_dropout = nn.Dropout(p=dropout_p)
         self.decoder = Decoder(self.input_size, self.output_size, hidden_size=hidden_size, num_layers=num_layers, unit=unit_name).to(device)
 
 
@@ -77,7 +77,8 @@ class Seq2SeqModel(nn.Module):
     def forward(self, x):
         h = self.encoder(x)
 
-        h = h[-1] #TODO: understand which output do we need to use
+        #TODO: understand which output do we need to use
+        h = self.hidden_dropout(h[-1]) 
 
         out_probs = self.decoder(x, h)
         return out_probs
