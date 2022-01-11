@@ -3,9 +3,8 @@
 
 ## General
 Main:
-* compute metric values for test
-* learnable torchtext weigths
 * implement f1
+* learnable torchtext weigths
 * add **attention**
 * add **weighted loss** to see if it boosts accuracy
 * see if **bidirectionality** boosts metrics
