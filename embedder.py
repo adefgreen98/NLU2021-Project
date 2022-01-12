@@ -1,5 +1,6 @@
 import pickle
 import torch 
+import torchtext
 
 from nlp_init import get_preprocessor
 
@@ -11,12 +12,16 @@ class Embedder():
     __end_tok = '<EOS>'
     __empty_ent = 'O'
  
-    def __init__(self, entities_path=None, embedding_method='spacy', preprocessor=None, dataset=None):
+    def __init__(self, entities_path=None, embedding_method='glove', ext_vocab=None, dataset=None):
         
-        if embedding_method == 'spacy':
-            self.preprocessor = preprocessor
-            if preprocessor is None: self.preprocessor = get_preprocessor()
+        # Initialize word embeddings
+        self.embedding_method = embedding_method
 
+        self.ext_vocab = ext_vocab
+        if self.ext_vocab is None: 
+            self.ext_vocab = get_preprocessor(embedding_method) 
+
+        # Initialize entities
         assert (entities_path is None and dataset is not None) or (entities_path is not None and dataset is None) 
         if dataset is not None:
             entities = dataset.get_entities()
@@ -39,11 +44,11 @@ class Embedder():
                 return self.preprocess_single_sentence(x)
             else:
                 x,y = self.get_test_sentence(x, y)
-                x = torch.stack([torch.tensor(self.preprocessor.vocab[word].vector) for word in x])
+                x = self.ext_vocab.get_sent(x)
                 y = torch.stack([torch.tensor([self.tag2idx[tag] for tag in y], dtype=torch.uint8)])
                 return x,y
         else:
-            x = torch.stack([torch.stack([torch.tensor(self.preprocessor.vocab[word].vector) for word in b]) for b in x], dim=0)
+            x = torch.stack([self.ext_vocab.get_sent(b) for b in x], dim=0)
             y = torch.stack([torch.tensor([self.tag2idx[tag] for tag in b], dtype=torch.uint8) for b in y], dim=0)
             return x,y
 
@@ -86,7 +91,7 @@ class Embedder():
 
 
     def get_embedding_size(self):
-        return self.preprocessor.vocab.vectors_length
+        return self.ext_vocab.get_size()
 
 
     def preprocess_single_sentence(self, sent=None, pad_len=None):
@@ -95,7 +100,7 @@ class Embedder():
         Used for model inference.
         """
         x = Embedder._preprocess_test_sentence(sent, pad_len)
-        return torch.stack([torch.tensor(self.preprocessor.vocab[word].vector) for word in x])
+        return self.ext_vocab.get_sent(x)
 
 
     def get_test_sentence(self, sent, lab):
