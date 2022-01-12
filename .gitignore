@@ -2,8 +2,10 @@ __pycache__
 atis
 iob_atis
 .vscode
+.vector_cache
 tests
 models
+stat_results
 
 check_sanity.py
 *.pth
