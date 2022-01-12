@@ -1,6 +1,7 @@
 import os
 import shutil
 import gc
+import tqdm
 
 import pandas as pd
 import torch
@@ -65,6 +66,7 @@ def get_optimizer(model, lr=0.001, name="adam"):
     if name == 'adam': return torch.optim.Adam(model.parameters(), lr)
     elif name == 'sgd': return torch.optim.SGD(model.parameters(), lr)
     elif name == 'adamw': return torch.optim.AdamW(model.parameters(), lr)
+    elif name == 'sparse_adam': return torch.optim.SparseAdam(model.parameters(), lr)
     else: raise RuntimeError("unexpected optimizer name " + str(name))
 
 
@@ -114,6 +116,11 @@ def iterate(model, dataloader, optimizer, loss_fn, mode):
 
     loss_history = torch.zeros(len(dataloader), dtype=torch.float)
     acc_history = [[],[]]
+
+    progbar_length = len(dataloader)
+    progbar = tqdm.tqdm(position=0, leave=True)
+    progbar.reset(total=progbar_length)
+
     if mode == 'train': 
         for i, data in enumerate(dataloader):
             optimizer.zero_grad()
@@ -123,18 +130,20 @@ def iterate(model, dataloader, optimizer, loss_fn, mode):
 
             loss_history[i] = loss
 
-            #TODO: refine accuracy?
             acc_history[0].append(acc_labels_list[0])
             acc_history[1].append(acc_labels_list[1])
+
+            progbar.update()
     else:
         with torch.no_grad():
             for i, data in enumerate(dataloader):
                 loss, acc_labels_list = model.process_batch(data, loss_fn)
                 loss_history[i] = loss
 
-                #TODO: refine accuracy?
                 acc_history[0].append(acc_labels_list[0])
                 acc_history[1].append(acc_labels_list[1])
+                
+                progbar.update()
 
     return loss_history, acc_history
 
@@ -223,7 +232,6 @@ def test(model, dataset, nr_sentences=None, save_path='tests', fname=None, rnd=T
     result = conll_evaluate(true_seqs, pred_seqs, verbose=False)
     print("------------------ TEST RESULT ------------------")
     print("accuracy (non-'O') = {:.4f} | accuracy = {:.4f} | precision = {:.4f}  |  recall = {:.4f}  |  f1 = {:.4f}".format(*result))
-    print("-------------------------------------------------")
     
     with open(fname, 'wt') as f:
         f.write(" ".join([str(el) for el in result]) + "\n")
@@ -232,6 +240,7 @@ def test(model, dataset, nr_sentences=None, save_path='tests', fname=None, rnd=T
             # if i < 5: print(s)
             f.write(s)
             f.write("\n\n")
+    return {"non-'O' acc.": result[0], "accuracy": result[1], "precision": result[2], "recall": result[3], "f1": result[4]}
 
 
 def test_beam_search(net, dataset, nr_sentences=None, beam_width=5, save_path='tests', fname=None, rnd=True):
