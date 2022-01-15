@@ -62,7 +62,8 @@ def get_attr_possibilities():
     attr_possibilities = {}
     for k in attr_names:
         attr_possibilities[k] = set()
-        for _cfg in cfgs: attr_possibilities[k].add(_cfg[k])
+        for _cfg in cfgs: 
+            if k in _cfg: attr_possibilities[k].add(_cfg[k])
     
     return attr_possibilities
 
@@ -73,7 +74,7 @@ def get_single_attr_configs(attribute:str):
     for name in available_files():
         # adds name to list of configs containing specific value
         _cfg = attrs_from_fname(name)
-        res_cfgs[_cfg[attribute]].append(name) 
+        res_cfgs[_cfg.get(attribute, 'not_found')].append(name)
     return res_cfgs
 
 
@@ -91,11 +92,29 @@ def dframes_for_attribute(attribute:str):
         values_dframes_dict[k][attribute] = k
     return pandas.DataFrame().append(list(values_dframes_dict.values()))
 
-def build_histogram(*args, _savefig=False):
+def build_histogram(*args, notfound_option: dict=None, _savefig=False):
     for attribute in args:
         assert type(attribute) == str
         tmp = dframes_for_attribute(attribute)
-        ax = sns.catplot(col=attribute, data=tmp, kind='bar')
-        ax.set_ylabels('Metric value')
-        if _savefig: ax.savefig(os.path.join(_images_path, datetime.datetime.strftime(datetime.datetime.now(), "%Y_%m_%d_%H_%M_%S") + f"_{attribute}"))
+
+        # Building DataFrame with metric values on each line
+        l = [[{'metric': k, 'value': el[k], attribute: el[notfound_option[attribute]] if el[attribute] == 'not_found' else el[attribute]} for k in el if k != attribute] for el in tmp.to_dict('records')]
+        l = [d for el in l for d in el]
+        df = pandas.DataFrame.from_records(l)
+        
+        # Plotting
+        plt.figure(figsize=(10, 6))
+        ax = sns.barplot(data=df, hue=attribute, x='metric', y='value')
+        for container in ax.containers: ax.bar_label(container, fmt="%.2f", padding=20)
+        ax.spines['right'].set_visible(False)
+        ax.spines['top'].set_visible(False)
+        plt.suptitle(attribute)
+        plt.legend(loc='upper left', borderaxespad=-1, bbox_to_anchor=(1.02, 1.0))
+
+
+        if _savefig: plt.savefig(os.path.join(_images_path, datetime.datetime.strftime(datetime.datetime.now(), "%Y_%m_%d_%H_%M_%S") + f"_{attribute}"))
     plt.show()
+
+
+if __name__ == '__main__':
+    build_histogram(*os.sys.argv[1:], _savefig=False)
