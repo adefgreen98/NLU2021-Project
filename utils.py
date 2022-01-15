@@ -118,7 +118,7 @@ def iterate(model, dataloader, optimizer, loss_fn, mode):
     acc_history = [[],[]]
 
     progbar_length = len(dataloader)
-    progbar = tqdm.tqdm(position=0, leave=True)
+    progbar = tqdm.tqdm(position=0, leave=False, ncols=70)
     progbar.reset(total=progbar_length)
 
     if mode == 'train': 
@@ -243,6 +243,15 @@ def test(model, dataset, nr_sentences=None, save_path='tests', fname=None, rnd=T
     return {"non-'O' acc.": result[0], "accuracy": result[1], "precision": result[2], "recall": result[3], "f1": result[4]}
 
 
+# BEAM SEARCH UTILITIES
+
+def choose_beam_to_eval(gt, beam, metric='f1'):
+    metric_idx = {"non-'O' acc.": 0, "accuracy": 1, "precision": 2, "recall": 3, "f1": 4}
+    idx = torch.argmax(torch.tensor([conll_evaluate(gt, b)[metric_idx[metric]] for b in beam]), dim=-1).item()
+    return beam[idx]
+
+
+
 def test_beam_search(net, dataset, nr_sentences=None, beam_width=5, save_path='tests', fname=None, rnd=True):
     
     net.eval()
@@ -255,12 +264,18 @@ def test_beam_search(net, dataset, nr_sentences=None, beam_width=5, save_path='t
     fname = os.path.join(save_path, fname)
 
     toprint = []
+    true_seqs = []
+    pred_seqs = []
     for i in idxs:
         _str = "++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++\n"
         sent, lab = dataset[i]
         beam, score = net.beam_inference(sent) 
         
         sent, lab = net.embedder.get_test_sentence(sent, lab) #regularize with SOS, EOS for printing
+        
+        true_seqs.extend(lab)
+        pred_seqs.extend(choose_beam_to_eval(lab, beam))
+
         _str += f"{'Sentence' : <15}{'Label' : ^30}" + "".join([f"{'Score ' + str(score[i]) : ^30}" for i in range(len(score))]) + "\n"
         _str += "---------------------------------------------------------------------------------\n"
         for i in range(len(sent)):
@@ -268,12 +283,14 @@ def test_beam_search(net, dataset, nr_sentences=None, beam_width=5, save_path='t
         _str += "\n"
         toprint.append(_str)
     
-    #TODO: how to compute metrics when we have multiple results? maybe the most correct in the beam?
-    
+    result = conll_evaluate(true_seqs, pred_seqs, verbose=False)
+    print("------------------ BEAM SEARCH TEST RESULT ------------------")
+    print("accuracy (non-'O') = {:.4f} | accuracy = {:.4f} | precision = {:.4f}  |  recall = {:.4f}  |  f1 = {:.4f}".format(*result))
     with open(fname, 'wt') as f:
         for i, s in enumerate(toprint): 
             f.write(s)
             f.write("\n\n")
+    return {"non-'O' acc.": result[0], "accuracy": result[1], "precision": result[2], "recall": result[3], "f1": result[4]}
 
 """# Plots"""
 
