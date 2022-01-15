@@ -12,6 +12,7 @@ Original file is located at
 
 # Dependencies
 """
+import time
 
 from itertools import product
 
@@ -68,23 +69,25 @@ parameters = {
     "valid_ratio": [0],
     "batch_size": [64],
     "loss": ["masked_ce"],
-    "optimizer": ["adam"],
+    "optimizer": ["adam", "adamw"],
     "learning_rate": [1e-3],
     "nr_epochs": [15],
     "model_params": {
         "unit_name": ["gru"],
-        "hidden_size": [200],
-        "num_layers": [2]
+        "hidden_size": [100, 200],
+        "num_layers": [2],
+        "intermediate_dropout": [0.0, 0.5, 0.7]
     },
-    "embedding_method": ['glove']
+    "embedding_method": ['spacy', 'glove']
 }
 
 if __name__ == '__main__':
-
-    for i in range(4):
-        for cfg in produce_configurations(parameters):
-            print()
-            print("---> Configuration: <---", *[str(k) + ": " + str(v) for k,v in cfg.items()], sep='\n')
+    iterations = 3
+    for i in range(iterations):
+        _cfgs = list(produce_configurations(parameters))
+        for j, cfg in enumerate(_cfgs):
+            print(f"---> Iteration {i + 1}, Configuration {j + 1} <---") 
+            print(*[str(k) + ": " + str(v) for k,v in cfg.items()], sep='\n')
             main(cfg, train_path = "iob_atis/atis.train.pkl", test_path = "iob_atis/atis.test.pkl", _save=True, _save_stats=True)
             print("~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~")
             print()

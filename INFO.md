@@ -3,6 +3,9 @@
 * PennTreebank, CONLL, others from the course
 * Some info on legacy vs modern pytorch at https://colab.research.google.com/github/pytorch/text/blob/master/examples/legacy_tutorial/migration_tutorial.ipynb#scrollTo=zCvxeLbYW3I
 
+# ConLL eval script
+At https://github.com/sighsmile/conlleval/blob/master/conlleval.py  
+
 # Papers
 * Gobbi, Stepanov, Riccardi http://disi.unitn.it/~riccardi/papers2/Clicit18-concept-tagging.pdf
 * Search for *slot filling* and *entity extraction*
@@ -10,3 +13,4 @@
 * https://ieeexplore.ieee.org/stamp/stamp.jsp?tp=&arnumber=6998838 complete DL review
 * https://paperswithcode.com/paper/attention-based-recurrent-neural-network
 * find paper for weighted cross entropy
+* https://aclanthology.org/D16-1223.pdf

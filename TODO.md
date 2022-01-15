@@ -3,23 +3,36 @@
 
 ## General
 Main:
-* implement f1
-* learnable torchtext weigths
+* add random (?) baseline
+* add CRF baseline (also CRF + embeddings)
+* what other CRF features can be used?
+* understand if needed **unknown** words management
+* understand what input pytorch is feeding into decoder (sentence or previous label)
+* see if **bidirectionality** boosts metrics
 * add **attention**
 * add **weighted loss** to see if it boosts accuracy
-* see if **bidirectionality** boosts metrics
+
+Graphing:
+* add option for naming 'not_found' parameter
+* add distinction between selected attribute and selected configurations of other excluded attributes
 
 Embeddings:
-* add an LSTM character-wise encoder for word embeddings
-* torchtext **does** provide pretrained embeddings https://pytorch.org/text/stable/vocab.html#vectors
-* see what happens with **unfrozen** embeddings
 
-Others
+Others 
+* find a way to balance statistical summations
+* retrieve number of parameters
+* get reference for beam search
+* what was the paper for sampling methods in GLP? **nucleus sampling?**
+* pca for reducting dimensionality of initial embeddings
 * test instability with / without teacher forcing
 
+Dataset Metrics:
+* number of samples
+* labels distribution (top50 ?)
+* size of tag set
+* 
+
 ## Code specific
-* download evaluator script from https://github.com/sighsmile/conlleval/blob/master/conlleval.py 
 * solve the `nan` accuracy issue (due to zero items of a specific category in validation or training) --> maybe use sigmoid / squashing number of false positives?
-* add tqdm for epochs
 
 """
