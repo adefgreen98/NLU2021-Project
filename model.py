@@ -15,11 +15,12 @@ class Encoder(nn.Module):
         "rnn": "nn.RNN"
     }
 
-    def __init__(self, input_size, unit="gru", num_layers=2, hidden_size=256):
+    def __init__(self, input_size, unit="gru", num_layers=2, hidden_size=256, dropout=0.0):
         super(Encoder, self).__init__()
-        self.model = eval(Encoder.unit_map[unit])(input_size, hidden_size, num_layers=num_layers, batch_first=True)
+        self.model = eval(Encoder.unit_map[unit])(input_size, hidden_size, num_layers=num_layers, dropout=dropout, batch_first=True)
 
     def forward(self, x):
+        # retrurns both h vector over sequence and h_n (last)
         return self.model(x)
 
 """Notes for Decoder:
@@ -33,23 +34,28 @@ class Decoder(nn.Module):
         "rnn": "nn.RNN"
     }
 
-    def __init__(self, input_size, output_size, unit="gru", num_layers=2, hidden_size=256):
+    def __init__(self, input_size, output_size, unit="gru", num_layers=2, hidden_size=256, dropout=0.0):
         super(Decoder, self).__init__()
 
         self.output_size = output_size
-        self.model = eval(Decoder.unit_map[unit])(input_size, hidden_size, num_layers=num_layers, batch_first=True)
+        self.model = eval(Decoder.unit_map[unit])(input_size, hidden_size, num_layers=num_layers, dropout=dropout, batch_first=True)
 
-        self.classifier = nn.Sequential(*[
-            nn.Linear(hidden_size, output_size),
-            nn.ReLU()
-        ])
+        self.classifier = nn.Linear(hidden_size, output_size)
+        # self.classifier = nn.Sequential(*[
+        #     nn.Linear(hidden_size, output_size),
+        #     nn.ReLU()
+        # ])
         
 
     def forward(self, x, h_encoder):
         h = self.model(x, h_encoder)
         outs = h[0] #excluding decoder final hidden state
 
-        return self.classifier(outs)
+        res = self.classifier(outs)
+        
+        if not self.training:
+            res = torch.nn.functional.softmax(res, dim=-1)
+        return res
 
 """## Seq2Seq
 
@@ -59,28 +65,38 @@ TODO:
 
 class Seq2SeqModel(nn.Module):
 
-    def __init__(self, embedder, unit_name='gru', num_layers=2, hidden_size=256, dropout_p=0.0, device='cuda'):
-        super(Seq2SeqModel, self).__init__()
+    def __init__(self, embedder, 
+        unit_name='gru', num_layers=2, 
+        hidden_size=256, 
+        intermediate_dropout=0.0, encoder_dropout=0.0, decoder_dropout=0.0,
+        device='cuda'):
         
+        super(Seq2SeqModel, self).__init__()
+        self.unit_name = unit_name
         self.embedder = embedder # needed for converting words to vectors during inference
         self.device = device
         self.input_size = self.embedder.get_embedding_size()
         self.output_size = len(self.embedder.get_entities())
 
-        self.encoder = Encoder(self.input_size, hidden_size=hidden_size, num_layers=num_layers, unit=unit_name).to(device)
-        self.hidden_dropout = nn.Dropout(p=dropout_p)
-        self.decoder = Decoder(self.input_size, self.output_size, hidden_size=hidden_size, num_layers=num_layers, unit=unit_name).to(device)
+        self.encoder = Encoder(self.input_size, hidden_size=hidden_size, num_layers=num_layers, dropout=encoder_dropout, unit=unit_name).to(device)
+        self.hidden_dropout = nn.Dropout(p=intermediate_dropout)
+        self.decoder = Decoder(self.input_size, self.output_size, hidden_size=hidden_size, dropout=decoder_dropout, num_layers=num_layers, unit=unit_name).to(device)
 
 
     # Forward methods
     
     def forward(self, x):
-        h = self.encoder(x)
+        # 0 --> all sequence (needed for attention); 1 --> only final hidden
+        h_enc = self.encoder(x)
 
-        #TODO: understand which output do we need to use
-        h = self.hidden_dropout(h[-1]) 
-
-        out_probs = self.decoder(x, h)
+        if self.unit_name == 'lstm':
+            # need to exclude cell-state (c_t) vector
+            h = self.hidden_dropout(h_enc[-1][0])
+            c = self.hidden_dropout(h_enc[-1][1]) 
+            out_probs = self.decoder(x, (h, c))
+        else:
+            h = self.hidden_dropout(h_enc[-1]) 
+            out_probs = self.decoder(x, h)
         return out_probs
     
     
