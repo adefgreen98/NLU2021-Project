@@ -247,7 +247,16 @@ def test(model, dataset, nr_sentences=None, save_path='tests', fname=None, rnd=T
 
 def choose_beam_to_eval(gt, beam, metric='f1'):
     metric_idx = {"non-'O' acc.": 0, "accuracy": 1, "precision": 2, "recall": 3, "f1": 4}
-    idx = torch.argmax(torch.tensor([conll_evaluate(gt, b)[metric_idx[metric]] for b in beam]), dim=-1).item()
+    scores=[]
+    for b in beam:
+        results = conll_evaluate(gt, b, verbose=False)
+        if metric == "non-'O' acc.":
+            # this is the case of ZeroDivisionError in conll.py
+            if results[metric_idx[metric]] < 0:
+                results[metric_idx[metric]] = len([el for el in b if el == 'O']) / len(gt)
+        scores.append(results[metric_idx[metric]])
+
+    idx = torch.argmax(torch.tensor(scores), dim=-1).item()
     return beam[idx]
 
 
@@ -260,7 +269,7 @@ def test_beam_search(net, dataset, nr_sentences=None, beam_width=5, save_path='t
     if rnd: idxs = torch.randperm(len(dataset))[:nr_sentences].tolist()
     else: idxs = range(nr_sentences)
 
-    if fname is None:  fname = "beam.txt"
+    if fname is None:  fname = f"beam_{beam_width}.txt"
     fname = os.path.join(save_path, fname)
 
     toprint = []
@@ -269,7 +278,7 @@ def test_beam_search(net, dataset, nr_sentences=None, beam_width=5, save_path='t
     for i in idxs:
         _str = "++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++\n"
         sent, lab = dataset[i]
-        beam, score = net.beam_inference(sent) 
+        beam, score = net.beam_inference(sent, beam_width=beam_width) 
         
         sent, lab = net.embedder.get_test_sentence(sent, lab) #regularize with SOS, EOS for printing
         

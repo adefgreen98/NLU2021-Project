@@ -181,7 +181,8 @@ def get_result(correct_chunks, true_chunks, pred_chunks,
     
 
     ##### my modification #####
-    acc_nonO = 100*nonO_correct_counts/nonO_true_counts
+    try: acc_nonO = 100*nonO_correct_counts/nonO_true_counts
+    except ZeroDivisionError: acc_nonO = -1.0
     acc = 100*sum_correct_counts/sum_true_counts
     res = (acc_nonO, acc, prec, rec, f1)
     if not verbose:
