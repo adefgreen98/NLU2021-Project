@@ -18,8 +18,9 @@ from collections import defaultdict
 
 
 def get_embedder(name, vec_size=300, dataset_path='iob_atis/atis.train.pkl'):
+    assert name in ['glove', 'spacy', 'none']
+    assert vec_size in [50, 100, 200, 300]
     if name == 'glove':
-        assert vec_size in [50, 100, 200, 300]
         tmpvocab = torchtext.vocab.GloVe(name='6B', dim=vec_size)
 
         with open(dataset_path, 'rb') as f:
@@ -78,15 +79,41 @@ def get_embedder(name, vec_size=300, dataset_path='iob_atis/atis.train.pkl'):
         nlp.get_vec_size = get_vec_size.__get__(nlp)
 
         return nlp
+    elif name == 'none':
+        # initializes with normal distribution in [-1, 1]
+        with open(dataset_path, 'rb') as f:
+            _, dataset_dicts = pickle.load(f) 
+            vocab = list(dataset_dicts["token_ids"].keys())
 
+        # selecting only relevant embeddings
+        to_append = []
+        word2idx = {}
+        for word in vocab:
+            word2idx[word] = len(to_append)
+            to_append.append(torch.randn(vec_size) - 0.5) # random initialization
+        
+        # adding padding words
+        word2idx['<BOS>'] = len(word2idx)
+        to_append.append(torch.zeros(vec_size, dtype=torch.float))
+        
+        word2idx['<EOS>'] = len(word2idx)
+        to_append.append(torch.zeros(vec_size, dtype=torch.float))
+
+        word2idx['<PAD>'] = len(word2idx)
+        to_append.append(torch.ones(vec_size, dtype=torch.float) * -1)
+
+        # appending new vectors to old ones
+        tmpvectors = torch.stack(to_append)
+
+        res = torch.nn.Embedding.from_pretrained(tmpvectors, freeze=False).cuda()
+        res.word2idx = word2idx
+
+        def get_sent(self, sent): return self(torch.LongTensor([self.word2idx[word] for word in sent]).cuda())
+        def get_vec_size(self): return self.weight.shape[-1]
+        res.get_sent = get_sent.__get__(res)
+        res.get_vec_size = get_vec_size.__get__(res)
+
+        return res
     else:
         raise NotImplementedError
 
-
-
-
-
-def get_preprocessor(method):
-    if method == 'spacy': return SpacyEmbedding()
-    elif method == 'glove': return TorchEmbedding(learn=True)
-    else: raise ValueError("unsupported embedding method")
