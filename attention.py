@@ -30,10 +30,6 @@ class ConcatAttention(nn.Module):
         compr_h_t = self.dec_compr(h_t)
         compr_h_t = torch.cat([compr_h_t for j in range(seq_len)], dim=1) #concatenating along sequence length
 
-        # alphas = []
-        # for i in range(seq_len):
-        #     alphas.append(self.attention_score(compr_h_t[i] + compr_h_enc[i]))
-        # alphas = torch.cat(alphas, dim=-1)
         alphas = self.attention_score(compr_h_t + compr_h_enc)
         context = torch.sum(h_enc * alphas, dim=1).unsqueeze(0)
         return context, alphas
@@ -65,15 +61,37 @@ class GlobalAttention(nn.Module):
 
 
 class LocalAttention(nn.Module):
-    def __init__(self, decoder_hidden_size):
+    def __init__(self, decoder_hidden_size, alignment_type='global', att_hidden_size=None):
         super(LocalAttention, self).__init__()
         self.hidden_size = decoder_hidden_size
+        self.att_hidden_size = att_hidden_size if att_hidden_size is not None else decoder_hidden_size
+        self.D = 3
+        self.sigma = self.D / 2
 
-        # final concatenation layer
-        self.concat = torch.nn.Sequential(*[
-            torch.nn.Linear(2 * self.hidden_size, self.hidden_size, bias=False),
-            torch.nn.Tanh()
+        sw = {
+            'concat': "ConcatAttention(self.hidden_size, self.hidden_size, self.hidden_size)",
+            'global': 'GlobalAttention(self.hidden_size)'
+        }
+        self.alignment = eval(sw[alignment_type])
+
+        self.compute_pt = nn.Sequential(*[
+            nn.Linear(self.hidden_size, self.att_hidden_size, bias=False),
+            nn.Tanh(),
+            nn.Linear(self.att_hidden_size, 1, bias=False),
+            nn.Sigmoid()
         ])
+    
+    def forward(self, h_t, h_enc, sequence_lengths):
+        _, alphas = self.alignment(h_t, h_enc)
+        
+        pt = (sequence_lengths != 0).int().sum(dim=-1) * self.compute_pt(h_t).squeeze()
+        num = (sequence_lengths - pt.unsqueeze(-1)) ** 2
+        den = 2 * (torch.tensor(self.sigma) ** 2)
+        coeff = torch.exp(-1 * (num / den))
+        alphas = coeff * alphas.squeeze()
+        context = torch.sum(h_enc.permute(1,0,2) * alphas.unsqueeze(-1), dim=1).unsqueeze(0)
+        return context, alphas
+
 
 
 class AttentionDecoder(Decoder):
@@ -91,7 +109,7 @@ class AttentionDecoder(Decoder):
 
         sw = {
             'concat': "ConcatAttention(self.hidden_size, self.hidden_size, self.hidden_size)",
-            'local': 'LocalAttention()',
+            'local': 'LocalAttention(self.hidden_size)',
             'global': 'GlobalAttention(self.hidden_size)'
         }
         self.attention = eval(sw[attention_mode])
@@ -100,7 +118,7 @@ class AttentionDecoder(Decoder):
             torch.nn.Tanh()
         ])
     
-    def forward(self, d_in, prev_h, h_encoder):
+    def forward(self, d_in, prev_h, h_encoder, sequence_lengths=None):
         if self.use_embedder: d_in = self.embedder(d_in)
         d_in = self.dropout(d_in)
 
@@ -117,6 +135,11 @@ class AttentionDecoder(Decoder):
             else: h_t = att_h
             context, alphas = self.attention(h_t, h_encoder) 
             out = self.global_attn_concat(torch.cat([out, context], dim=-1))
+        elif self.attention_mode == 'local':
+            out, h = self.model(d_in, prev_h)
+            if att_h.shape[0] > 1: h_t = att_h[-1].unsqueeze(0)
+            else: h_t = att_h
+            context, alphas = self.attention(h_t, h_encoder, sequence_lengths)
 
         out = self.dropout(out)
         res = self.classifier(out.squeeze(0))
