@@ -12,7 +12,7 @@ import seaborn as sns
 from collections import defaultdict
 from utils import stoval
 
-_statistics_path = 'stat_results'
+_statistics_path = 'nonattention_stats'
 _images_path = os.path.join(_statistics_path, 'images')
 _excluded_attributes = ('valid_ratio', 'epochs')
 _allowed_columns = ("date", "non-'O' acc.", "accuracy", "precision", "recall", "f1")

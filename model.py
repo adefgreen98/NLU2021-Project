@@ -80,8 +80,8 @@ class Decoder(nn.Module):
         self.dropout = nn.Dropout(dropout)
         
 
-    def forward(self, d_in, prev_h, h_encoder=None):
-        # needed also h_enc for compatibility with attention
+    def forward(self, d_in, prev_h, h_encoder=None, sequence_lengths=None):
+        # needed also h_enc and pad_mask for compatibility with attention
         if self.use_embedder: d_in = self.embedder(d_in)
         d_in = self.dropout(d_in)
         outs, h = self.model(d_in, prev_h)
@@ -140,8 +140,9 @@ class Seq2SeqModel(nn.Module):
         return entities
     
     
-    def decoder_forward_onestep(self, curr_x, curr_y, curr_gt, prev_h, h_enc):
-        
+    def decoder_forward_onestep(self, curr_x, curr_y, curr_gt, prev_h, h_enc, sequence_lengths=None):
+        # in order to use this function also for attention, there are also arguments needed in that case
+
         batch_size = curr_x.shape[0]
 
         # defining decoder modality
@@ -167,11 +168,11 @@ class Seq2SeqModel(nn.Module):
                 if curr_y is None: d_in = self.output_size + torch.zeros(1, batch_size, device=self.device, dtype=torch.long) #custom index for beginning of sentence
                 else: d_in = torch.argmax(curr_y, dim=-1)
 
-        out, prev_dec_hidden = self.decoder(d_in, prev_h, h_enc)
+        out, prev_dec_hidden = self.decoder(d_in, prev_h, h_enc, sequence_lengths)
         return out, prev_dec_hidden
     
 
-    def forward(self, x, y=None):
+    def forward(self, x, y=None, pad_mask=None):
         
         x = x.permute(1,0,2) #needed to change shape to (sequence, batch, embedding)
         if y is not None: 
@@ -197,12 +198,15 @@ class Seq2SeqModel(nn.Module):
         prev_dec_hidden = h
         out = None
         curr_gt = None
-
+        seq_len = pad_mask.shape[1]
+        sequence_lengths = torch.arange(seq_len, dtype=float, device=self.device) * pad_mask.int() # obtain indices that are non-padding tokens 
+        
         # looping over words (but keeping batch dimension)
         for word in range(x.shape[0]):
             if self.training and y is not None: 
+                # initializes ground truth during training when not at start of sentence
                 curr_gt = y[word].unsqueeze(0)
-            out, prev_dec_hidden = self.decoder_forward_onestep(x[word], out, curr_gt, prev_dec_hidden, h_enc)
+            out, prev_dec_hidden = self.decoder_forward_onestep(x[word], out, curr_gt, prev_dec_hidden, h_enc, sequence_lengths)
             out_probs.append(out.squeeze().unsqueeze(0))
 
         out_probs = torch.cat(out_probs, dim=0) 
@@ -218,8 +222,10 @@ class Seq2SeqModel(nn.Module):
 
         x = x.to(self.device)
         yt = yt.to(self.device)
+
+        sentence_lengths = pad_mask.int()
         
-        logits = self(x, yt)
+        logits = self(x, yt, pad_mask)
 
         if len(logits.shape) < 3: logits.unsqueeze_(0) #case batch_size == 1
 

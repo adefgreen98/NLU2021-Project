@@ -67,18 +67,18 @@ def produce_configurations(params):
 
 parameters = {
     "batch_size": [64],
-    "optimizer": ["adamw"],
+    "optimizer": ["adam", "adamw"],
     "learning_rate": [1e-3],
     "nr_epochs": [30],
     "model_params": {
-        "bidirectional": [True],
-        "embedding_method": ['glove'],
-        "unit_name": ["lstm"],
-        "hidden_size": [256],
-        "num_layers": [2],
-        "decoder_input_mode": ['label'],
-        "intermediate_dropout": [0.0],
-        "internal_dropout": [0.0]
+        "bidirectional": [True, False],
+        "embedding_method": ['spacy','glove', 'none'],
+        "unit_name": ["lstm", "gru", "rnn"],
+        "hidden_size": [128, 256],
+        "num_layers": [1, 2],
+        "decoder_input_mode": ['label', 'label_nograd', 'sentence', 'label_embed'],
+        "intermediate_dropout": [0.0, 0.3, 0.5],
+        "internal_dropout": [0.0, 0.3, 0.5]
     },
    
 }
@@ -89,21 +89,21 @@ attn_parameters = {
     "learning_rate": [1e-3],
     "nr_epochs": [30],
     "model_params": {
-        'num_layers': [2],
+        'num_layers': [2, 1],
         "bidirectional": [True],
-        "embedding_method": ['spacy', 'glove'],
-        "unit_name": ["lstm"],
+        "embedding_method": ['none'],
+        "unit_name": ["rnn"],
         "hidden_size": [256],
-        "decoder_input_mode": ['sentence'],
-        "attention_mode": ['global'],
+        "decoder_input_mode": ['label_nograd'],
+        "attention_mode": ['local'],
     }
 
 }
 
-# parameters = attn_parameters
+parameters = attn_parameters
 
 if __name__ == '__main__':
-    iterations = 1
+    iterations = 4
     for i in range(iterations):
         _cfgs = list(produce_configurations(parameters))
         for j, cfg in enumerate(_cfgs):
