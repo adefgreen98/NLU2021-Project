@@ -16,9 +16,9 @@ import torchtext
 
 from collections import defaultdict
 
-class TorchEmbedding(object):
 
-    def __init__(self, dataset_path='iob_atis/atis.train.pkl', learn=False, vec_size=300):
+def get_embedder(name, vec_size=300, dataset_path='iob_atis/atis.train.pkl'):
+    if name == 'glove':
         assert vec_size in [50, 100, 200, 300]
         tmpvocab = torchtext.vocab.GloVe(name='6B', dim=vec_size)
 
@@ -28,9 +28,9 @@ class TorchEmbedding(object):
 
         # selecting only relevant embeddings
         to_append = []
-        self.word2idx = {}
+        word2idx = {}
         for word in vocab:
-            self.word2idx[word] = len(to_append)
+            word2idx[word] = len(to_append)
             try: 
                 i = tmpvocab.stoi[word]
                 to_append.append(tmpvocab.vectors[i].squeeze())
@@ -38,34 +38,28 @@ class TorchEmbedding(object):
                 to_append.append(torch.randn(vec_size) - 0.5)
         
         # adding padding words
-        self.word2idx['<BOS>'] = len(self.word2idx)
+        word2idx['<BOS>'] = len(word2idx)
         to_append.append(torch.zeros(vec_size, dtype=tmpvocab.vectors.dtype))
         
-        self.word2idx['<EOS>'] = len(self.word2idx)
+        word2idx['<EOS>'] = len(word2idx)
         to_append.append(torch.zeros(vec_size, dtype=tmpvocab.vectors.dtype))
 
-        self.word2idx['<PAD>'] = len(self.word2idx)
+        word2idx['<PAD>'] = len(word2idx)
         to_append.append(torch.ones(vec_size, dtype=tmpvocab.vectors.dtype) * -1)
 
         # appending new vectors to old ones
         tmpvectors = torch.stack(to_append)
 
-        self.emb = torch.nn.Embedding.from_pretrained(tmpvectors, freeze=(not learn)).cuda()
-        
+        res = torch.nn.Embedding.from_pretrained(tmpvectors, freeze=False).cuda()
+        res.word2idx = word2idx
 
-    def __getitem__(self, word):
-        return self.emb(torch.LongTensor([self.word2idx[word]]).cuda())
+        def get_sent(self, sent): return self(torch.LongTensor([self.word2idx[word] for word in sent]).cuda())
+        def get_vec_size(self): return self.weight.shape[-1]
+        res.get_sent = get_sent.__get__(res)
+        res.get_vec_size = get_vec_size.__get__(res)
 
-    def get_sent(self, sent):
-        return self.emb(torch.LongTensor([self.word2idx[word] for word in sent]).cuda())
-
-    def get_size(self):
-        return self.emb(torch.LongTensor([0]).cuda()).shape[-1]
-
-
-class SpacyEmbedding(object):
-
-    def __init__(self):
+        return res
+    elif name == 'spacy':
         nlp = None
         # needed to avoid kernel restart to use spacy.load('en_core_web_lg')
         try: nlp = en_core_web_lg.load()
@@ -78,16 +72,18 @@ class SpacyEmbedding(object):
         v = np.ones_like(nlp.vocab['<BOS>'].vector) * -1
         nlp.vocab.set_vector("<PAD>", v)
 
-        self.nlp_vocab = nlp.vocab
-    
-    def __getitem__(self, word):
-        return torch.tensor(self.nlp_vocab[word].vector)
+        def get_sent(self, sent): return torch.stack([torch.tensor(self.vocab[word].vector) for word in sent])
+        nlp.get_sent = get_sent.__get__(nlp)
+        def get_vec_size(self): return self.vocab.vectors_length
+        nlp.get_vec_size = get_vec_size.__get__(nlp)
 
-    def get_size(self):
-        return self.nlp_vocab.vectors_length
-    
-    def get_sent(self, sent):
-        return torch.stack([torch.tensor(self.nlp_vocab[word].vector) for word in sent])
+        return nlp
+
+    else:
+        raise NotImplementedError
+
+
+
 
 
 def get_preprocessor(method):
