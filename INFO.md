@@ -14,5 +14,6 @@ At https://github.com/sighsmile/conlleval/blob/master/conlleval.py
 * https://paperswithcode.com/paper/attention-based-recurrent-neural-network
 * find paper for weighted cross entropy
 * https://aclanthology.org/D16-1223.pdf
-* original attention paper (alignment model) https://arxiv.org/pdf/1409.0473.pdf 
+* Badhanau: original attention paper (alignment model) https://arxiv.org/pdf/1409.0473.pdf 
+* Luong: more modern attention https://arxiv.org/pdf/1508.04025.pdf 
 * comprehensive summary of attention https://towardsdatascience.com/attention-in-neural-networks-e66920838742 

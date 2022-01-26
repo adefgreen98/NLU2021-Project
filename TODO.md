@@ -7,7 +7,6 @@ Main:
 * add CRF baseline (also CRF + embeddings)
 * what other CRF features can be used?
 * understand if needed **unknown** words management
-* understand what input pytorch is feeding into decoder (sentence or previous label)
 * see if **bidirectionality** boosts metrics
 * add **attention**
 * add **weighted loss** to see if it boosts accuracy

@@ -7,16 +7,28 @@ import pandas as pd
 import torch
 import torch.nn as nn
 
+from random import shuffle
+
 from model import Seq2SeqModel
+from attention import AttentionSeq2SeqModel
 
 from dataset import ATISDataset
 
 from loss import *
-from embedder import Embedder
 from conlleval import evaluate as conll_evaluate
 
 def get_device():
     return "cuda" if torch.cuda.is_available() else "cpu"
+
+def stoval(s):
+    if s == "True": return True 
+    elif s == "False": return False
+
+    try: return int(s)
+    except ValueError:
+        try: return float(s)
+        except ValueError:
+            return s
 
 """# Getters"""
 
@@ -46,19 +58,29 @@ def split_dataset(dataset, valid_ratio=0.1, rnd=False):
 
 
 """Dataloader"""
-def get_dataloader(dataset, collate_type:str=None, batch_size=32, num_workers=0, shuffle=False):
-    _collate_fn = None
-    if collate_type == 'ce':
-        _collate_fn = Embedder.collate_ce
-    return torch.utils.data.DataLoader(dataset, num_workers=num_workers, batch_size=batch_size, collate_fn=_collate_fn, shuffle=shuffle)
+def get_dataloader(dataset, batch_size=32, num_workers=0, shuffle=False):
+    def collate(batch): return [b[0] for b in batch], [b[1] for b in batch]
+    return torch.utils.data.DataLoader(dataset, num_workers=num_workers, batch_size=batch_size, collate_fn=collate, shuffle=shuffle)
 
 
 """Model"""
-def get_model(embedder, **model_params):
-    return Seq2SeqModel(embedder, **model_params).to(get_device())
+def get_model(**model_params):
+    if 'attention_mode' not in model_params or model_params['attention_mode'] == 'none':
+        return Seq2SeqModel(**model_params).to(get_device())
+    else: return AttentionSeq2SeqModel(**model_params)
 
-def load_model(path):
-    raise NotImplementedError("still to understand how to load state dict without access to model information")
+
+def load_model(path, from_config:dict=None):
+    model_params = os.path.split(path)[1] #counting relative path from the topmost 'models' folder
+
+    if from_config is None:
+        model_params = {s_attr.split("=")[0]: stoval(s_attr.split("=")[1]) for s_attr in model_params.split(";")}
+        model = get_model(**model_params, device=get_device())
+    else:
+        model_params = from_config
+        model = get_model(**model_params, device=get_device())
+    model.load_state_dict(torch.load(path))
+    return model
 
 
 """Optimizer"""
@@ -66,25 +88,15 @@ def get_optimizer(model, lr=0.001, name="adam"):
     if name == 'adam': return torch.optim.Adam(model.parameters(), lr)
     elif name == 'sgd': return torch.optim.SGD(model.parameters(), lr)
     elif name == 'adamw': return torch.optim.AdamW(model.parameters(), lr)
-    elif name == 'sparse_adam': return torch.optim.SparseAdam(model.parameters(), lr)
     else: raise RuntimeError("unexpected optimizer name " + str(name))
 
 
-"""Loss function"""
-def get_loss(name, embedder):
-    """
-    Returns the chosen loss. The 2nd argument is needed for MaskedLoss instantiation.
-    """
-    if name == 'ce': 
-        return nn.CrossEntropyLoss().to(get_device())
-    elif name == 'masked_ce': 
-        return MaskedLoss(nn.CrossEntropyLoss().to(get_device()), embedder.get_padding_token_index()).to(get_device())
-    else: 
-        raise ValueError(f"loss {str(name)} not supported")
+def get_loss(name):
+    return torch.nn.CrossEntropyLoss()
 
     
 """# Metrics"""
-def compute_accuracy(yp, yt, lab2idx, weigh_classes=True):
+def custom_compute_accuracy(yp, yt, lab2idx, weigh_classes=True):
     confusion_matrix = torch.zeros(len(lab2idx), len(lab2idx), dtype=torch.int)
     for i in range(len(yt)): 
         for idx in zip(yt[i], yp[i]):
@@ -109,13 +121,23 @@ def compute_accuracy(yp, yt, lab2idx, weigh_classes=True):
     return d
 
 
+def compute_accuracy(yp, yt):
+    res = conll_evaluate(yt, yp, verbose=False)
+    acc, f1 = res[1], res[-1]
+    # tmp = []
+    # for bp, bt in zip(yp, yt): tmp.append(list(zip(['fake_sent' for i in bp], bt, bp)))
+    # acc, f1 = right_eval(tmp)
+    return acc, f1
+
+
+
 """# Templates for train, validate & test:"""
 def iterate(model, dataloader, optimizer, loss_fn, mode):
     if mode == 'train': model.train()
     else: model.eval()
 
     loss_history = torch.zeros(len(dataloader), dtype=torch.float)
-    acc_history = [[],[]]
+    acc_history = {'predictions': [], 'trues': []}
 
     progbar_length = len(dataloader)
     progbar = tqdm.tqdm(position=0, leave=False, ncols=70)
@@ -124,62 +146,72 @@ def iterate(model, dataloader, optimizer, loss_fn, mode):
     if mode == 'train': 
         for i, data in enumerate(dataloader):
             optimizer.zero_grad()
-            loss, acc_labels_list = model.process_batch(data, loss_fn)
+            loss, yp, yt = model.process_batch(data, loss_fn)
             loss.backward()
             optimizer.step()
 
             loss_history[i] = loss
 
-            acc_history[0].append(acc_labels_list[0])
-            acc_history[1].append(acc_labels_list[1])
+            acc_history['predictions'].append(yp)
+            acc_history['trues'].append(yt)
 
             progbar.update()
     else:
         with torch.no_grad():
             for i, data in enumerate(dataloader):
-                loss, acc_labels_list = model.process_batch(data, loss_fn)
+                loss, yp, yt = model.process_batch(data, loss_fn)
                 loss_history[i] = loss
 
-                acc_history[0].append(acc_labels_list[0])
-                acc_history[1].append(acc_labels_list[1])
+                acc_history['predictions'].append(yp)
+                acc_history['trues'].append(yt)
                 
                 progbar.update()
 
     return loss_history, acc_history
 
 
-def epoch(model, dataloader, optimizer, loss_fn, mode):
+def epoch(model, dataloader, optimizer, loss_fn, mode, test_set=None):
 
     loss_history, acc_history = iterate(model, dataloader, optimizer, loss_fn, mode)
     mean_loss = loss_history.mean()
-    global_acc = compute_accuracy(*acc_history, model.embedder.tag2idx) #here using list of all outputs from each batch
+    yp, yt = acc_history['predictions'], acc_history['trues']
 
-    del loss_history, acc_history
-    gc.collect()
-    
-    #TODO: tensorboard or something to plot live
-    return mean_loss, global_acc["total"]
+    # concatenating batches
+    ep_yp, ep_yt = [model.idx2tag[i] for el in yp for i in el], [model.idx2tag[i] for el in yt for i in el]
+
+    # global_acc = custom_compute_accuracy(*acc_history, model.embedder.tag2idx)['total']
+    acc, f1 = compute_accuracy(ep_yp, ep_yt) 
+
+    return mean_loss, acc, f1
 
 
-def train(nr, model, train_dl, optimizer, loss_fn, valid_dl=None, greedy_save=False):
+def train(nr, model, train_dl, optimizer, loss_fn, valid_dl=None, greedy_save=False, test_set=None):
     
     metrics = {}
-    metrics["train"] = {"mean_loss": torch.zeros(nr, dtype=torch.float), "mean_acc": torch.zeros(nr, dtype=torch.float)}
+    metrics["train"] = {
+        "mean_loss": torch.zeros(nr, dtype=torch.float), 
+        "mean_acc": torch.zeros(nr, dtype=torch.float),
+        "mean_f1": torch.zeros(nr, dtype=torch.float)
+        }
     if valid_dl is not None:
-        metrics["eval"] = {"mean_loss": torch.zeros(nr, dtype=torch.float), "mean_acc": torch.zeros(nr, dtype=torch.float)}
+        metrics["eval"] = {
+            "mean_loss": torch.zeros(nr, dtype=torch.float), 
+            "mean_acc": torch.zeros(nr, dtype=torch.float),
+            "mean_f1": torch.zeros(nr, dtype=torch.float)
+            }
 
     best_acc = -1
     for e in range(nr):
         print(f"------------- EPOCH {e + 1}/{nr} -------------")
 
         # TRAIN
-        metrics['train']["mean_loss"][e], metrics['train']["mean_acc"][e] = epoch(model, train_dl, optimizer, loss_fn, 'train')
-        print(f"""train : loss = {metrics['train']["mean_loss"][e].item()} | accuracy = {metrics['train']["mean_acc"][e].item()}""")
+        metrics['train']["mean_loss"][e], metrics['train']["mean_acc"][e], metrics['train']["mean_f1"][e] = epoch(model, train_dl, optimizer, loss_fn, 'train')
+        print(f"""train : loss = {metrics['train']["mean_loss"][e].item() : .4f} | accuracy = {metrics['train']["mean_acc"][e].item() : .4f} | f1 = {metrics['train']["mean_f1"][e] : .4f}""")
         
         # EVAL
         if valid_dl is not None:
-            metrics['eval']["mean_loss"][e], metrics['eval']["mean_acc"][e] = epoch(model, valid_dl, optimizer, loss_fn, 'eval')
-            print(f"""{'eval'} : loss = {metrics['eval']["mean_loss"][e].item()} | accuracy = {metrics['eval']["mean_acc"][e].item()}""")
+            metrics['eval']["mean_loss"][e], metrics['eval']["mean_acc"][e], metrics['eval']["mean_f1"][e] = epoch(model, valid_dl, optimizer, loss_fn, 'eval', test_set=test_set)
+            print(f"""{'eval'} : loss = {metrics['eval']["mean_loss"][e].item() : .4f} | accuracy = {metrics['eval']["mean_acc"][e].item() : .4f} | f1 = {metrics['eval']["mean_f1"][e] : .4f}""")
 
             # Saving model as better evaluation
             if greedy_save:
@@ -195,69 +227,29 @@ def train(nr, model, train_dl, optimizer, loss_fn, valid_dl=None, greedy_save=Fa
                 
         print("")
     
-    return metrics
+    return model, metrics
 
 
 
-
-def test(model, dataset, nr_sentences=None, save_path='tests', fname=None, rnd=True):
+def test(model, test_dataloader):
 
     model.eval() 
 
-    if nr_sentences is None: nr_sentences = len(dataset)
+    _, acc_history = iterate(model, test_dataloader, None, lambda a,b:torch.tensor(0.0), 'eval')
     
-    if rnd: idxs = torch.randperm(len(dataset))[:nr_sentences].tolist()
-    else: idxs = range(nr_sentences)
-
-    if fname is None: fname = "greedy.txt"
-    fname = os.path.join(save_path, fname)
+    # concatenating batches
+    ep_yp, ep_yt = [model.idx2tag[i] for el in acc_history['predictions'] for i in el], [model.idx2tag[i] for el in acc_history['trues'] for i in el]
     
-    toprint = []
-    true_seqs = []
-    pred_seqs = []
-    for i in idxs:
-        sent, lab = dataset[i]
-        yp = model.run_inference(sent)
-
-        s, l = model.embedder.get_test_sentence(sent, lab) #regularize with SOS, EOS for printing & testing
-        
-        true_seqs.extend(l)
-        pred_seqs.extend(yp)
-
-        _str = ""
-        for el in zip(s, l, yp):
-            _str += f"{el[0] : <15}{el[1] : ^30}{el[2] : ^30}\n"
-        toprint.append(_str)
-    
-    result = conll_evaluate(true_seqs, pred_seqs, verbose=False)
+    print("")
+    result = conll_evaluate(ep_yp, ep_yt, verbose=False)
+    print("")
     print("------------------ TEST RESULT ------------------")
     print("accuracy (non-'O') = {:.4f} | accuracy = {:.4f} | precision = {:.4f}  |  recall = {:.4f}  |  f1 = {:.4f}".format(*result))
-    
-    with open(fname, 'wt') as f:
-        f.write(" ".join([str(el) for el in result]) + "\n")
-        f.write("\n")
-        for i, s in enumerate(toprint): 
-            # if i < 5: print(s)
-            f.write(s)
-            f.write("\n\n")
     return {"non-'O' acc.": result[0], "accuracy": result[1], "precision": result[2], "recall": result[3], "f1": result[4]}
 
 
 # BEAM SEARCH UTILITIES
-
-def choose_beam_to_eval(gt, beam, metric='f1'):
-    metric_idx = {"non-'O' acc.": 0, "accuracy": 1, "precision": 2, "recall": 3, "f1": 4}
-    scores=[]
-    for b in beam:
-        results = conll_evaluate(gt, b, verbose=False)
-        if metric == "non-'O' acc.":
-            # this is the case of ZeroDivisionError in conll.py
-            if results[metric_idx[metric]] < 0:
-                results[metric_idx[metric]] = len([el for el in b if el == 'O']) / len(gt)
-        scores.append(results[metric_idx[metric]])
-
-    idx = torch.argmax(torch.tensor(scores), dim=-1).item()
-    return beam[idx]
+metric_idx = {"non-'O' acc.": 0, "accuracy": 1, "precision": 2, "recall": 3, "f1": 4}
 
 
 
@@ -278,22 +270,20 @@ def test_beam_search(net, dataset, nr_sentences=None, beam_width=5, save_path='t
     for i in idxs:
         _str = "++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++\n"
         sent, lab = dataset[i]
-        beam, score = net.beam_inference(sent, beam_width=beam_width) 
+        s, beam, score, yt = net.beam_inference(sent, lab, beam_width=beam_width) 
         
-        sent, lab = net.embedder.get_test_sentence(sent, lab) #regularize with SOS, EOS for printing
-        
-        true_seqs.extend(lab)
-        pred_seqs.extend(choose_beam_to_eval(lab, beam))
+        true_seqs.extend(yt)
+        pred_seqs.extend(beam[0])
 
         _str += f"{'Sentence' : <15}{'Label' : ^30}" + "".join([f"{'Score ' + str(score[i]) : ^30}" for i in range(len(score))]) + "\n"
         _str += "---------------------------------------------------------------------------------\n"
-        for i in range(len(sent)):
+        for i in range(len(s)):
             _str += f"{sent[i] : <15}{lab[i] : ^30}" + "".join([f"{beam[j][i] : ^30}" for j in range(len(beam))]) + "\n"
         _str += "\n"
         toprint.append(_str)
     
     result = conll_evaluate(true_seqs, pred_seqs, verbose=False)
-    print("------------------ BEAM SEARCH TEST RESULT ------------------")
+    print(f"------------------ BEAM SEARCH {beam_width} TEST RESULT ------------------")
     print("accuracy (non-'O') = {:.4f} | accuracy = {:.4f} | precision = {:.4f}  |  recall = {:.4f}  |  f1 = {:.4f}".format(*result))
     with open(fname, 'wt') as f:
         for i, s in enumerate(toprint): 
@@ -306,7 +296,9 @@ def test_beam_search(net, dataset, nr_sentences=None, beam_width=5, save_path='t
 
 """# Saves"""
 
-def save_model(model, configuration:dict):
+def save_model(model, configuration:dict, models_folder='models'):
+    if not os.path.exists(models_folder): os.mkdir(models_folder)
+
     dirname = ";".join([str(k) + "=" + str(v) for k,v in configuration.items() if k != 'model_params'] + [str(k) + "=" + str(v) for k,v in configuration['model_params'].items()])
     dirname = os.path.join("models", dirname)
     if os.path.exists(dirname): shutil.rmtree(dirname)
