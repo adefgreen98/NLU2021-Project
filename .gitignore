@@ -8,4 +8,6 @@ models
 stat_results
 
 check_sanity.py
+test_main.py
+test_*.py
 *.pth
