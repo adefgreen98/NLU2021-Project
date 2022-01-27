@@ -14,7 +14,7 @@ def main(cfg, **kwargs):
     # DATASET
     dataset = get_dataset(kwargs["train_path"])
     
-    train_set, valid_set = split_dataset(dataset, valid_ratio=0.4, rnd=True)
+    train_set, valid_set = split_dataset(dataset, valid_ratio=0.25, rnd=True)
     test_dataset = get_dataset(kwargs["test_path"])
     
     train_dataloader = get_dataloader(train_set, batch_size=cfg["batch_size"], shuffle=True)
@@ -35,6 +35,8 @@ def main(cfg, **kwargs):
         _path = save_model(net, cfg)
         save_training(metrics, _path)
     
+
+    # load best model for test
     try: net = load_model(os.path.join(_path, 'model.pth'), from_config=cfg["model_params"])
     except FileNotFoundError:
         try: net = load_model('checkpoint.pth', from_config=cfg["model_params"])
@@ -43,16 +45,16 @@ def main(cfg, **kwargs):
     # GREEDY TESTING
     test_metrics = test(net, test_dataloader)
 
-    # # BEAM-SEARCH TESTING
-    # beam_widths = [6, 8]
-    # test_beam_metrics = {}
-    # for w in beam_widths:
-    #     test_beam_metrics[w] = test_beam_search(net, test_dataset, save_path=_path, beam_width=w)
+    # BEAM-SEARCH TESTING
+    beam_widths = [6, 8]
+    test_beam_metrics = {}
+    for w in beam_widths:
+        test_beam_metrics[w] = test_beam_search(net, test_dataloader, save_path=_path, beam_width=w)
     
     if kwargs["_save_stats"]: 
         add_results(cfg, test_metrics)
-        # for w in beam_widths:
-        #     add_results(dict(**cfg, beam_width=w), test_beam_metrics[w])
+        for w in beam_widths:
+            add_results(dict(**cfg, beam_width=w), test_beam_metrics[w])
 
 
 def produce_configurations(params):
@@ -67,18 +69,16 @@ def produce_configurations(params):
 
 parameters = {
     "batch_size": [64],
-    "optimizer": ["adam", "adamw"],
+    "optimizer": ["adamw"],
     "learning_rate": [1e-3],
     "nr_epochs": [30],
     "model_params": {
-        "bidirectional": [True, False],
-        "embedding_method": ['spacy','glove', 'none'],
-        "unit_name": ["lstm", "gru", "rnn"],
-        "hidden_size": [128, 256],
-        "num_layers": [1, 2],
-        "decoder_input_mode": ['label', 'label_nograd', 'sentence', 'label_embed'],
-        "intermediate_dropout": [0.0, 0.3, 0.5],
-        "internal_dropout": [0.0, 0.3, 0.5]
+        "bidirectional": [True],
+        "embedding_method": ['glove'],
+        "unit_name": ["lstm"],
+        "hidden_size": [256],
+        "num_layers": [2],
+        "decoder_input_mode": ['label_embed']
     },
    
 }
@@ -89,13 +89,13 @@ attn_parameters = {
     "learning_rate": [1e-3],
     "nr_epochs": [30],
     "model_params": {
-        'num_layers': [2, 1],
-        "bidirectional": [True],
-        "embedding_method": ['none'],
-        "unit_name": ["rnn"],
+        'num_layers': [1, 2],
+        "bidirectional": [True, False],
+        "embedding_method": ['glove'],
         "hidden_size": [256],
         "decoder_input_mode": ['label_nograd'],
-        "attention_mode": ['local'],
+        "attention_mode": ['concat', 'global', 'local'],
+        "unit_name": ["lstm", "rnn", "gru"]
     }
 
 }
@@ -103,21 +103,24 @@ attn_parameters = {
 parameters = attn_parameters
 
 if __name__ == '__main__':
-    iterations = 4
+    iterations = 1
     for i in range(iterations):
         _cfgs = list(produce_configurations(parameters))
         for j, cfg in enumerate(_cfgs):
             print(f"---> Iteration {i + 1}/{iterations}, Configuration {j + 1}/{len(_cfgs)} <---") 
-            # print(*[str(k) + ": " + str(v) for k,v in cfg.items()], sep='\n')
             pprint(cfg)
             main(cfg, train_path = "iob_atis/atis.train.pkl", test_path = "iob_atis/atis.test.pkl", _save=False, _save_stats=False)
             print("~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~")
             print()
+        
+            # net = get_model(**cfg["model_params"], device=get_device())
+            # test_dataset = get_dataset("iob_atis/atis.test.pkl")
+            # test_dataloader = get_dataloader(test_dataset, batch_size=32)
+            # beam_widths = [6, 8]
+            # test_beam_metrics = {}
+            # for w in beam_widths:
+            #     test_beam_metrics[w] = test_beam_search(net, test_dataloader, beam_width=w)
     
-    # build_histogram('optimizer', 'intermediate_dropout', 'internal_dropout', 'beam_width', 'learning_rate', 'unit_name',
-    #         notfound_option=dict(beam_width='1', internal_dropout='0.0', intermediate_dropout='0.0'), 
-    #         _savefig=True
-    #         )
-
-
+    # import datetime 
+    # print(datetime.datetime.now().strftime("%d-%b-%Y (%H:%M:%S)"))
 

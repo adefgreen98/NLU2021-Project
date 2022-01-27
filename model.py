@@ -270,10 +270,16 @@ class Seq2SeqModel(nn.Module):
         return padded_s, res_yp, yt
     
 
-    def beam_inference(self, batch_sent, batch_label, beam_width=5):
+
+    def beam_inference(self, data, beam_width=5):
+
+        sent, lab = data
+        x, pad_mask, yt = self._embed_batch(sent, lab)
+
+        batch_size = pad_mask.shape[0]
+        seq_len = pad_mask.shape[1]
 
         x = x.permute(1,0,2) #needed to change shape to (sequence, batch, embedding)
-        if y is not None: y = y.permute(1,0)
         
         h_enc, h = self.encoder(x)
         if self.unit_name == 'lstm':
@@ -281,6 +287,7 @@ class Seq2SeqModel(nn.Module):
             c = h[1]
             h = h[0]
             if self.bidirectional:
+                # concatenates forward and backward hidden states
                 h = torch.stack([torch.cat((h[i, :, :], h[i+1, :, :]), dim=-1) for i in range(0, 2*self.num_layers, 2)], dim=0)
                 c = torch.stack([torch.cat((c[i, :, :], c[i+1, :, :]), dim=-1) for i in range(0, 2*self.num_layers, 2)], dim=0)
             c = self.hidden_dropout(c)
@@ -288,44 +295,77 @@ class Seq2SeqModel(nn.Module):
             h = (h, c) 
         else:
             if self.bidirectional:
+                # concatenates forward and backward hidden states
                 h = torch.stack([torch.cat((h[i, :, :], h[i+1, :, :]), dim=-1) for i in range(0, 2*self.num_layers, 2)], dim=0)
             h = self.hidden_dropout(h) 
-        
-        prev_dec_hidden = h
-        out = None
+    
 
-        beam_seq = [[] for b in range(beam_width)]
-        beam_scores = torch.zeros(beam_width).to(self.device)
-        for word in range(x.shape[0]):
-            out, prev_dec_hidden = self.decoder_forward_onestep(x[word], out, None, prev_dec_hidden, h_enc)
-            out = out.softmax(dim=-1)
+        x = x.permute(1,0,2) # put again in (batch, sequence, hidden) 
+
+        batch_preds = []
+        batch_scores = []
+        for batch_index in range(batch_size):
             
-            # CANDIDATES GENERATION
-            new_beam_scores, new_beam_indices = out.topk(beam_width, dim=-1)
-            new_beam_scores.log_().squeeze_()
-            new_beam_indices.squeeze_()
+            if self.unit_name == 'lstm': 
+                prev_dec_hidden = (h[0][:, batch_index].unsqueeze(1).contiguous(), h[1][:, batch_index].unsqueeze(1).contiguous()) 
+            else: 
+                prev_dec_hidden = h[:, batch_index].unsqueeze(1).contiguous()
+            batch_h_enc = h_enc[:, batch_index].unsqueeze(1).contiguous()
+            sequence_lengths = (torch.arange(seq_len, dtype=float, device=self.device) * pad_mask.int()[batch_index]).unsqueeze(0) # obtain indices that are non-padding tokens 
+            b_x = x[batch_index].unsqueeze(0).permute(1,0,2)
 
-            # BEAM UPDATE
-            if len(beam_seq[0]) == 0:
-                # handle this case separately to avoid choosing same index multiple times (because of the top scores)
-                for b in range(beam_width):
-                    beam_seq[b].append(new_beam_indices[b].item())
-                    beam_scores[b] = new_beam_scores[b]
-            else:
-                # 1. generating combination of current beam scores + candidate scores (since we use log scores)
-                combination_matrix = beam_scores.view(-1, 1) + new_beam_scores
-                # 2. retrieving linearized indices of best product values
-                best_combinations = combination_matrix.flatten().argsort(descending=True)[:beam_width]
-                # 3. retrieving (row, col) indices for the best scores
-                row, col = torch.div(best_combinations, beam_width, rounding_mode='trunc').tolist(), (best_combinations % beam_width).tolist()
-                # 4. actual beam update
-                new_beam_seq = []
-                for b in range(beam_width):
-                    new_beam_seq.append(beam_seq[row[b]] + [new_beam_indices[col[b]].item()])
-                    beam_scores[b] = combination_matrix[row[b], col[b]]
-                beam_seq = new_beam_seq
+            beam_seq = [[] for b in range(beam_width)]
+            beam_scores = torch.zeros(beam_width).to(self.device)
+            best_beam_outs = tmp_beam_outs = [None for b in range(beam_width)]
+            best_beam_hiddens = tmp_beam_hiddens = [prev_dec_hidden for b in range(beam_width)]
+            
+            for word in range(seq_len):
+                new_beam_scores, new_beam_indices = [None for b in range(beam_width)], [None for b in range(beam_width)]
+                for b in range(beam_width): 
+                    tmp_beam_outs[b], tmp_beam_hiddens[b] = self.decoder_forward_onestep(b_x[word].unsqueeze(0), tmp_beam_outs[b], None, tmp_beam_hiddens[b], batch_h_enc, sequence_lengths)
+                    new_beam_scores[b], new_beam_indices[b] = tmp_beam_outs[b].topk(beam_width, dim=-1)
+                    
+                    new_beam_scores[b].log_().squeeze_()
+                    new_beam_indices[b].squeeze_()
+                
+                # BEAM UPDATE
+                if len(beam_seq[0]) == 0:
+                    # handle this case separately to avoid choosing same index multiple times (because of the top scores)
+                    for b in range(beam_width):
+                        beam_seq[b].append(new_beam_indices[b][b].item())
+                        beam_scores[b] = new_beam_scores[b][b]
+                else:
+                    # 1. generating combination of current beam scores + candidate scores (since we use log scores)
+                    combination_matrix = torch.stack(new_beam_scores) + beam_scores.view(-1, 1)
+                    # 2. retrieving linearized indices of best product values
+                    best_combinations = combination_matrix.flatten().argsort(descending=True)[:beam_width]
+                    # 3. retrieving (row, col) indices for the best scores as combination of row-oldbeam / col-newindex
+                    row, col = torch.div(best_combinations, beam_width, rounding_mode='trunc').tolist(), (best_combinations % beam_width).tolist()
+                    # 4. actual beam update
+                    new_beam_seq = []
+                    for b in range(beam_width):
+                        # updates predictions
+                        new_beam_seq.append(beam_seq[row[b]] + [new_beam_indices[row[b]][col[b]].item()])
+                        # updates scores
+                        beam_scores[b] = combination_matrix[row[b], col[b]]
+                        # updates outputs bookeep
+                        best_beam_outs[b] = tmp_beam_outs[col[b]]
+                        # updates hidden states bookeep
+                        best_beam_hiddens[b] = tmp_beam_hiddens[col[b]]
+                    beam_seq = new_beam_seq
+            
+            beam_preds = [self.convert_label(seq) for seq in beam_seq]
+            for b in range(beam_width):
+                # performs unpadding for current sentence in batch
+                beam_preds[b] = [beam_preds[b][j] for j in range(seq_len) if pad_mask[batch_index][j].item()]
+            batch_preds.append(beam_preds)
+            batch_scores.append(beam_scores.tolist())
+        
+        
+        unpadded_sent = [[sent[i][j] for j in range(seq_len) if pad_mask[i][j].item()] for i in range(batch_size)]
+        unpadded_lab = [[lab[i][j] for j in range(seq_len) if pad_mask[i][j].item()] for i in range(batch_size)]
 
-        return padded_s, [self.convert_label(seq) for seq in beam_seq], beam_scores.tolist(), yt
+        return unpadded_sent, batch_preds, batch_scores, unpadded_lab
     
 
     # Private methods

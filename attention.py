@@ -125,20 +125,20 @@ class AttentionDecoder(Decoder):
         if self.unit_name == 'lstm': att_h = prev_h[0]
         else: att_h = prev_h
         
+        # taking only last layer
+        if att_h.shape[0] > 1: h_t = att_h[-1].unsqueeze(0)
+        else: h_t = att_h
+        
         if self.attention_mode == 'concat':
-            context, alphas = self.attention(att_h, h_encoder)
+            context, alphas = self.attention(h_t, h_encoder)
             x = torch.cat((d_in, context), dim=-1)
             out, h = self.model(x, prev_h)
         elif self.attention_mode == 'global':
             out, h = self.model(d_in, prev_h)
-            if att_h.shape[0] > 1: h_t = att_h[-1].unsqueeze(0)
-            else: h_t = att_h
             context, alphas = self.attention(h_t, h_encoder) 
             out = self.global_attn_concat(torch.cat([out, context], dim=-1))
         elif self.attention_mode == 'local':
             out, h = self.model(d_in, prev_h)
-            if att_h.shape[0] > 1: h_t = att_h[-1].unsqueeze(0)
-            else: h_t = att_h
             context, alphas = self.attention(h_t, h_encoder, sequence_lengths)
 
         out = self.dropout(out)
