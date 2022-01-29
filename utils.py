@@ -71,9 +71,9 @@ def get_model(**model_params):
 
 
 def load_model(path, from_config:dict=None):
-    model_params = os.path.split(path)[1] #counting relative path from the topmost 'models' folder
 
     if from_config is None:
+        model_params = os.path.split(path)[1] #counting relative path from the topmost 'models' folder
         model_params = {s_attr.split("=")[0]: stoval(s_attr.split("=")[1]) for s_attr in model_params.split(";")}
         model = get_model(**model_params, device=get_device())
     else:
@@ -124,9 +124,6 @@ def custom_compute_accuracy(yp, yt, lab2idx, weigh_classes=True):
 def compute_accuracy(yp, yt):
     res = conll_evaluate(yt, yp, verbose=False)
     acc, f1 = res[1], res[-1]
-    # tmp = []
-    # for bp, bt in zip(yp, yt): tmp.append(list(zip(['fake_sent' for i in bp], bt, bp)))
-    # acc, f1 = right_eval(tmp)
     return acc, f1
 
 
@@ -253,13 +250,9 @@ metric_idx = {"non-'O' acc.": 0, "accuracy": 1, "precision": 2, "recall": 3, "f1
 
 
 
-def test_beam_search(net, dataset, nr_sentences=None, beam_width=5, save_path='tests', fname=None, rnd=True):
+def test_beam_search(net, dataloader, nr_sentences=None, beam_width=5, save_path='tests', fname=None, rnd=True):
     
     net.eval()
-
-    if nr_sentences is None: nr_sentences = len(dataset)
-    if rnd: idxs = torch.randperm(len(dataset))[:nr_sentences].tolist()
-    else: idxs = range(nr_sentences)
 
     if fname is None:  fname = f"beam_{beam_width}.txt"
     fname = os.path.join(save_path, fname)
@@ -267,23 +260,33 @@ def test_beam_search(net, dataset, nr_sentences=None, beam_width=5, save_path='t
     toprint = []
     true_seqs = []
     pred_seqs = []
-    for i in idxs:
-        _str = "++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++\n"
-        sent, lab = dataset[i]
-        s, beam, score, yt = net.beam_inference(sent, lab, beam_width=beam_width) 
-        
-        true_seqs.extend(yt)
-        pred_seqs.extend(beam[0])
 
-        _str += f"{'Sentence' : <15}{'Label' : ^30}" + "".join([f"{'Score ' + str(score[i]) : ^30}" for i in range(len(score))]) + "\n"
-        _str += "---------------------------------------------------------------------------------\n"
-        for i in range(len(s)):
-            _str += f"{sent[i] : <15}{lab[i] : ^30}" + "".join([f"{beam[j][i] : ^30}" for j in range(len(beam))]) + "\n"
-        _str += "\n"
-        toprint.append(_str)
-    
-    result = conll_evaluate(true_seqs, pred_seqs, verbose=False)
     print(f"------------------ BEAM SEARCH {beam_width} TEST RESULT ------------------")
+
+    progbar_length = len(dataloader)
+    progbar = tqdm.tqdm(position=0, leave=False, ncols=70)
+    progbar.reset(total=progbar_length)
+
+    for data in dataloader:
+        _str = "++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++\n"
+        s, beam, score, yt = net.beam_inference(data, beam_width=beam_width) 
+
+        # data is in batched mode
+        for batch_idx in range(len(s)):
+            true_seqs.extend(yt[batch_idx])
+            pred_seqs.extend(beam[batch_idx][0]) # best beam prediction is first
+            _str += f"{'Sentence' : <15}{'Label' : ^30}" + "".join([f"{'Score ' + str(score[batch_idx][i]) : ^30}" for i in range(len(score[batch_idx]))]) + "\n"
+            _str += "---------------------------------------------------------------------------------\n"
+            for i in range(len(s[batch_idx])):
+                # beam[batch_idx][j][i] because printing column-wise
+                _str += f"{s[batch_idx][i] : <15}{yt[batch_idx][i] : ^30}" + "".join([f"{beam[batch_idx][j][i] : ^30}" for j in range(len(beam[batch_idx]))]) + "\n" 
+            _str += "\n"
+            toprint.append(_str)
+
+        progbar.update()
+    print('') # separate from progbar
+
+    result = conll_evaluate(true_seqs, pred_seqs, verbose=False)
     print("accuracy (non-'O') = {:.4f} | accuracy = {:.4f} | precision = {:.4f}  |  recall = {:.4f}  |  f1 = {:.4f}".format(*result))
     with open(fname, 'wt') as f:
         for i, s in enumerate(toprint): 

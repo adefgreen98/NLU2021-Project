@@ -5,7 +5,8 @@ from itertools import product
 
 from utils import *
 from loss import *
-from statistics import add_results, build_histogram
+from statistics import add_results, build_histogram, get_stats_path, set_stats_path
+from collections import defaultdict
 
 """# Main method"""
 
@@ -44,17 +45,14 @@ def main(cfg, **kwargs):
 
     # GREEDY TESTING
     test_metrics = test(net, test_dataloader)
+    if kwargs["_save_stats"]: add_results(cfg, test_metrics)
 
-    # BEAM-SEARCH TESTING
-    beam_widths = [6, 8]
+    beam_width = [2, 4, 6, 8]
     test_beam_metrics = {}
-    for w in beam_widths:
-        test_beam_metrics[w] = test_beam_search(net, test_dataloader, save_path=_path, beam_width=w)
-    
-    if kwargs["_save_stats"]: 
-        add_results(cfg, test_metrics)
-        for w in beam_widths:
-            add_results(dict(**cfg, beam_width=w), test_beam_metrics[w])
+    for b in beam_width:
+        test_beam_metrics[b] = test_beam_search(net, test_dataloader, beam_width=b)
+
+    return test_beam_metrics
 
 
 def produce_configurations(params):
@@ -78,24 +76,26 @@ parameters = {
         "unit_name": ["lstm"],
         "hidden_size": [256],
         "num_layers": [2],
-        "decoder_input_mode": ['label_embed']
+        "decoder_input_mode": ['word+lab', 'sentence', 'label', 'label_nograd', 'label_embed'],
+        "intermediate_dropout": [0.0],
+        "internal_dropout": [0.0]
     },
    
 }
 
 attn_parameters = {
     "batch_size": [64],
-    "optimizer": ["adamw"],
+    "optimizer": ["adam"],
     "learning_rate": [1e-3],
     "nr_epochs": [30],
     "model_params": {
-        'num_layers': [1, 2],
-        "bidirectional": [True, False],
+        'num_layers': [2],
+        "bidirectional": [True],
         "embedding_method": ['glove'],
         "hidden_size": [256],
         "decoder_input_mode": ['label_nograd'],
-        "attention_mode": ['concat', 'global', 'local'],
-        "unit_name": ["lstm", "rnn", "gru"]
+        "attention_mode": ['global'],
+        "unit_name": ["lstm"]
     }
 
 }
@@ -103,24 +103,20 @@ attn_parameters = {
 parameters = attn_parameters
 
 if __name__ == '__main__':
-    iterations = 1
-    for i in range(iterations):
-        _cfgs = list(produce_configurations(parameters))
-        for j, cfg in enumerate(_cfgs):
+    set_stats_path('attention_stats')
+    beam_metrics = defaultdict(list)
+    iterations = 4
+    _cfgs = list(produce_configurations(parameters))
+    for j, cfg in enumerate(_cfgs):
+        for i in range(iterations):
             print(f"---> Iteration {i + 1}/{iterations}, Configuration {j + 1}/{len(_cfgs)} <---") 
             pprint(cfg)
-            main(cfg, train_path = "iob_atis/atis.train.pkl", test_path = "iob_atis/atis.test.pkl", _save=False, _save_stats=False)
+            res = main(cfg, train_path = "iob_atis/atis.train.pkl", test_path = "iob_atis/atis.test.pkl", _save=False, _save_stats=False)
+            for b in res: beam_metrics[b].append(res[b]['f1'])
             print("~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~")
             print()
-        
-            # net = get_model(**cfg["model_params"], device=get_device())
-            # test_dataset = get_dataset("iob_atis/atis.test.pkl")
-            # test_dataloader = get_dataloader(test_dataset, batch_size=32)
-            # beam_widths = [6, 8]
-            # test_beam_metrics = {}
-            # for w in beam_widths:
-            #     test_beam_metrics[w] = test_beam_search(net, test_dataloader, beam_width=w)
     
-    # import datetime 
-    # print(datetime.datetime.now().strftime("%d-%b-%Y (%H:%M:%S)"))
-
+    print("------------------------- BEAM MEANS -----------------------------------")
+    for k in beam_metrics:
+        print("Beam ", k, ": ", torch.tensor(beam_metrics[k]).mean())
+        

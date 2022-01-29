@@ -43,12 +43,6 @@ class GlobalAttention(nn.Module):
     def __init__(self, decoder_hidden_size):
         super(GlobalAttention, self).__init__()
         self.hidden_size = decoder_hidden_size
-
-        # final concatenation layer
-        self.concat = torch.nn.Sequential(*[
-            torch.nn.Linear(2 * self.hidden_size, self.hidden_size, bias=False),
-            torch.nn.Tanh()
-        ])
     
     def forward(self, ht, h_enc):
         # ht --> (1, batch, hidden)
@@ -106,17 +100,20 @@ class AttentionDecoder(Decoder):
             else: decoder_input_size = self.output_size
             decoder_input_size = decoder_input_size + self.hidden_size
             self.model = eval(self.unit_map[self.unit_name])(decoder_input_size, self.hidden_size, num_layers=self.model.num_layers, batch_first=False)
-
+        else:
+            #modifies final classification layer for concatenation of (input, context)
+            self.classifier = torch.nn.Sequential(*[
+                torch.nn.Linear(2 * self.hidden_size, self.hidden_size, bias=False),
+                torch.nn.Tanh(),
+                torch.nn.Linear(self.hidden_size, self.output_size, bias=False)
+            ])
         sw = {
             'concat': "ConcatAttention(self.hidden_size, self.hidden_size, self.hidden_size)",
             'local': 'LocalAttention(self.hidden_size)',
             'global': 'GlobalAttention(self.hidden_size)'
         }
         self.attention = eval(sw[attention_mode])
-        self.global_attn_concat = torch.nn.Sequential(*[
-            torch.nn.Linear(2 * self.hidden_size, self.hidden_size, bias=False),
-            torch.nn.Tanh()
-        ])
+
     
     def forward(self, d_in, prev_h, h_encoder, sequence_lengths=None):
         if self.use_embedder: d_in = self.embedder(d_in)
@@ -136,10 +133,11 @@ class AttentionDecoder(Decoder):
         elif self.attention_mode == 'global':
             out, h = self.model(d_in, prev_h)
             context, alphas = self.attention(h_t, h_encoder) 
-            out = self.global_attn_concat(torch.cat([out, context], dim=-1))
+            out = torch.cat([out, context], dim=-1)
         elif self.attention_mode == 'local':
             out, h = self.model(d_in, prev_h)
             context, alphas = self.attention(h_t, h_encoder, sequence_lengths)
+            out = torch.cat([out, context], dim=-1)
 
         out = self.dropout(out)
         res = self.classifier(out.squeeze(0))

@@ -6,6 +6,9 @@ iob_atis
 tests
 models
 stat_results
+*_stats
+report_images 
+old_model.py
 
 check_sanity.py
 test_main.py
