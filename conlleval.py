@@ -1,3 +1,7 @@
+
+# Taken from https://github.com/sighsmile/conlleval/blob/master/conlleval.py
+
+
 """
 This script applies to IOB2 or IOBES tagging scheme.
 If you are using a different scheme, please convert to IOB2 or IOBES.
