@@ -122,7 +122,7 @@ class Seq2SeqModel(nn.Module):
 
         self.teacher_forcing_rate = 0.5
 
-        assert decoder_input_mode in ['sentence', 'label', 'label_nograd', 'label_embed']
+        assert decoder_input_mode in ['sentence', 'label', 'label_nograd', 'label_embed', 'word+lab']
         self.decoder_input_mode = decoder_input_mode
 
         if self.decoder_input_mode == 'sentence':
@@ -132,7 +132,12 @@ class Seq2SeqModel(nn.Module):
             self.decoder = Decoder(self.output_size + 1, self.output_size, hidden_size=self.decoder_hidden_size, dropout=internal_dropout, num_layers=num_layers, unit=unit_name, use_embedder=True).to(device)
         else:
             self.decoder = Decoder(self.output_size, self.output_size, hidden_size=self.decoder_hidden_size, dropout=internal_dropout, num_layers=num_layers, unit=unit_name).to(device)
-    
+
+        # combination layer required for 'word+lab' input mode
+        self.wl_concat = nn.Sequential(*[
+            nn.Linear(self.output_size + self.embedder.get_vec_size(), self.output_size, bias=False),
+            nn.Tanh()
+        ])
     
     def get_entities(self, path):
         with open(path, 'rb') as f:
@@ -165,8 +170,12 @@ class Seq2SeqModel(nn.Module):
                 d_in = torch.zeros(1, batch_size, self.output_size, device=self.device).index_fill(-1, idx, 1)
             elif self.decoder_input_mode == 'label_embed': 
                 #uses an embedding layer also for labels
+                # embedding needs indices
                 if curr_y is None: d_in = self.output_size + torch.zeros(1, batch_size, device=self.device, dtype=torch.long) #custom index for beginning of sentence
                 else: d_in = torch.argmax(curr_y, dim=-1)
+            elif self.decoder_input_mode == 'word+lab':
+                if curr_y is None: curr_y = self.output_size + torch.zeros(1, batch_size, self.output_size, device=self.device, dtype=torch.long)
+                d_in = self.wl_concat(torch.cat((curr_y, curr_x.unsqueeze(0)), dim=-1))
 
         out, prev_dec_hidden = self.decoder(d_in, prev_h, h_enc, sequence_lengths)
         return out, prev_dec_hidden
@@ -199,7 +208,7 @@ class Seq2SeqModel(nn.Module):
         out = None
         curr_gt = None
         seq_len = pad_mask.shape[1]
-        sequence_lengths = torch.arange(seq_len, dtype=float, device=self.device) * pad_mask.int() # obtain indices that are non-padding tokens 
+        sequence_lengths = torch.arange(seq_len, dtype=torch.float32, device=self.device) * pad_mask.int() # obtain indices that are non-padding tokens 
         
         # looping over words (but keeping batch dimension)
         for word in range(x.shape[0]):
@@ -298,12 +307,13 @@ class Seq2SeqModel(nn.Module):
                 # concatenates forward and backward hidden states
                 h = torch.stack([torch.cat((h[i, :, :], h[i+1, :, :]), dim=-1) for i in range(0, 2*self.num_layers, 2)], dim=0)
             h = self.hidden_dropout(h) 
-    
 
-        x = x.permute(1,0,2) # put again in (batch, sequence, hidden) 
+        x = x.permute(1,0,2)
 
+        prev_dec_hidden = h
         batch_preds = []
         batch_scores = []
+
         for batch_index in range(batch_size):
             
             if self.unit_name == 'lstm': 
@@ -358,6 +368,7 @@ class Seq2SeqModel(nn.Module):
             for b in range(beam_width):
                 # performs unpadding for current sentence in batch
                 beam_preds[b] = [beam_preds[b][j] for j in range(seq_len) if pad_mask[batch_index][j].item()]
+            
             batch_preds.append(beam_preds)
             batch_scores.append(beam_scores.tolist())
         
@@ -386,3 +397,92 @@ class Seq2SeqModel(nn.Module):
         x_vec = self.embedder.get_sent(x).squeeze()
         return x, x_vec, y
 
+    def wrong_beam_inference(self, data, beam_width):
+        sent, lab = data
+        x, pad_mask, yt = self._embed_batch(sent, lab)
+
+        batch_size = pad_mask.shape[0]
+        seq_len = pad_mask.shape[1]
+
+        x = x.permute(1,0,2) #needed to change shape to (sequence, batch, embedding)
+        
+        h_enc, h = self.encoder(x)
+        if self.unit_name == 'lstm':
+            # need to manage cell-state (c_t) vector
+            c = h[1]
+            h = h[0]
+            if self.bidirectional:
+                # concatenates forward and backward hidden states
+                h = torch.stack([torch.cat((h[i, :, :], h[i+1, :, :]), dim=-1) for i in range(0, 2*self.num_layers, 2)], dim=0)
+                c = torch.stack([torch.cat((c[i, :, :], c[i+1, :, :]), dim=-1) for i in range(0, 2*self.num_layers, 2)], dim=0)
+            c = self.hidden_dropout(c)
+            h = self.hidden_dropout(h)
+            h = (h, c) 
+        else:
+            if self.bidirectional:
+                # concatenates forward and backward hidden states
+                h = torch.stack([torch.cat((h[i, :, :], h[i+1, :, :]), dim=-1) for i in range(0, 2*self.num_layers, 2)], dim=0)
+            h = self.hidden_dropout(h) 
+
+        prev_dec_hidden = h
+        sequence_lengths = torch.arange(seq_len, dtype=float, device=self.device) * pad_mask.int()
+
+        # performs 1st step of decoding to init beams
+        out, prev_dec_hidden = self.decoder_forward_onestep(x[0], None, None, prev_dec_hidden, h_enc, sequence_lengths)
+        beam_scores, beam_seq = out.squeeze().topk(beam_width, dim=-1)
+        best_beam_outs = [torch.stack([torch.zeros(1,self.output_size, device=self.device).index_fill_(-1, beam_seq[_batch, b], torch.tensor(1)) for _batch in range(batch_size)], dim=1) for b in range(beam_width)]
+        best_beam_hiddens = tmp_beam_hiddens = [prev_dec_hidden for b in range(beam_width)]
+
+        for word in range(1, seq_len):
+            tmp_beam_outs = [None for b in range(beam_width)]
+            tmp_beam_hiddens = [None for b in range(beam_width)]
+            new_beam_scores, new_beam_indices = [None for b in range(beam_width)], [None for b in range(beam_width)]
+            
+            for b in range(beam_width): 
+                tmp_beam_outs[b], tmp_beam_hiddens[b] = self.decoder_forward_onestep(x[word], best_beam_outs[b], None, best_beam_hiddens[b], h_enc, sequence_lengths)
+                new_beam_scores[b], new_beam_indices[b] = tmp_beam_outs[b].topk(beam_width, dim=-1)
+                
+                new_beam_scores[b].log_().squeeze_()
+                new_beam_indices[b].squeeze_()
+
+            # row: old beam | col: new value for each old beam 
+            new_beam_scores = torch.stack(new_beam_scores, dim=1)
+            new_beam_indices = torch.stack(new_beam_indices, dim=1)
+
+            # 1. generating combination of current beam scores + candidate scores (since we use log scores)
+            combination_matrix = beam_scores.view(batch_size, beam_width, 1) + new_beam_scores
+            # 2. retrieving linearized indices of best product values
+            best_combinations = combination_matrix.view(batch_size, -1).argsort(dim=-1, descending=True)[:, :beam_width] # --> (batch_size, beam_width)
+            # 3. retrieving (row, col) indices for the best scores as combination of row-oldbeam / col-newindex
+            row, col = torch.div(best_combinations, beam_width, rounding_mode='trunc'), (best_combinations % beam_width)
+            # 4. beam update
+            beam_scores = torch.tensor([[ new_beam_scores[_batch, row[_batch, b], col[_batch, b]].item() for b in range(beam_width)] for _batch in range(batch_size)], device=self.device)
+            beam_seq = beam_seq.view(batch_size, beam_width, -1)
+            # composes back as (batch_size, beam_seq, current length)
+            beam_seq = torch.stack([
+                    torch.stack([
+                        torch.cat((
+                            beam_seq[_batch, row[_batch, b]], 
+                            new_beam_indices[_batch, row[_batch, b], col[_batch, b]].view(1)
+                            ), dim=-1) 
+                            for b in range(beam_width)
+                    ], dim=0) 
+                for _batch in range(batch_size)
+            ], dim=0).to(self.device)
+
+            tmp_beam_outs = torch.stack(tmp_beam_outs, dim=1).squeeze().view(batch_size, beam_width, -1)
+            if self.unit_name == 'lstm':
+                lstm_h = torch.stack([el[0] for el in tmp_beam_hiddens], dim=1).squeeze().view(batch_size, beam_width, -1)
+                lstm_c = torch.stack([el[1] for el in tmp_beam_hiddens], dim=1).squeeze().view(batch_size, beam_width, -1)
+                best_lstm_h = [torch.stack([lstm_h[_batch, col[_batch, b]] for _batch in range(batch_size)], dim=0).unsqueeze(0) for b in range(beam_width)]
+                best_lstm_c = [torch.stack([lstm_c[_batch, col[_batch, b]] for _batch in range(batch_size)], dim=0).unsqueeze(0) for b in range(beam_width)]
+                best_beam_hiddens = list(zip(best_lstm_h, best_lstm_c))
+            else:
+                tmp_beam_hiddens = torch.stack(tmp_beam_hiddens, dim=1).squeeze().view(batch_size, beam_width, -1)
+                best_beam_hiddens = [torch.stack([tmp_beam_hiddens[_batch, col[_batch, b]] for _batch in range(batch_size)], dim=0).unsqueeze(0) for b in range(beam_width)]
+            best_beam_outs = [torch.stack([tmp_beam_outs[_batch, col[_batch, b]] for _batch in range(batch_size)], dim=0).unsqueeze(0) for b in range(beam_width)]
+
+        unpadded_sent = [[sent[i][j] for j in range(seq_len) if pad_mask[i][j].item()] for i in range(batch_size)]
+        unpadded_lab = [[lab[i][j] for j in range(seq_len) if pad_mask[i][j].item()] for i in range(batch_size)]
+
+        return unpadded_sent, beam_seq.tolist(), beam_scores.tolist(), unpadded_lab
