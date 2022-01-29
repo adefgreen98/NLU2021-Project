@@ -84,8 +84,8 @@ class ATISDataset(torch.utils.data.Dataset):
                 unique_tags = sorted(list(set(full_tags)))
                 co_occurrence.append("+".join(unique_tags))
 
-            self.statistics['max_length'] = max_len
-            self.statistics['avg_length'] = avg_sum / len(self)
+            self.statistics['max_length'] = max_len['val'] - 2
+            self.statistics['avg_length'] = avg_sum / len(self) - 2
             self.statistics["tag_dist"] = Counter(tag_dist)
             self.statistics['co_occurrence'] = Counter(co_occurrence)
             self.statistics["avg_tags_per_sent"] = torch.tensor(nr_tags_per_sentence).float().mean().item()
@@ -105,17 +105,22 @@ if __name__ == "__main__":
     print('Average Lenght', stats['avg_length'])
     print('Average Tags per Sentence', stats['avg_tags_per_sent'])
 
-    most_common_size = 30
-    co_occur_size = 13
+    most_common_size = 20
+    co_occur_size = 10
     iob_len_size = most_common_size
     vocab_size = most_common_size
-
+    palette = 'Spectral'
+    plt.figure(figsize=(12, 10))
+    
     # tag distribution
-    fig, ax = plt.subplots(figsize=(8, 6))
-    plt.title(f'Distribution of {most_common_size} most common tags')
+    ax = plt.subplot(3,2,1)
+    ax.grid()
+    # ax.set_title(f'Distribution of {most_common_size} most common tags')
     df = pd.DataFrame.from_records([{'name': k, 'count': v} for k,v in dict(stats['tag_dist'].most_common(most_common_size)).items()])
-    sns.barplot(data=df, y='name', x='count', ax=ax)
-    plt.tight_layout()
+    sns.barplot(data=df, y='name', x='count', ax=ax, palette=palette)
+    sns.despine()
+    ax.set_xlabel('')
+    ax.set_ylabel('')
     
     def change_height(_ax, new_value) :
         for patch in _ax.patches :
@@ -124,29 +129,37 @@ if __name__ == "__main__":
             patch.set_height(new_value)
             patch.set_y(patch.get_y() + diff * .5)
 
-    # co-occurrence of tags
-    fig, ax = plt.subplots(figsize=(12, 6))
-    plt.title(f'Co-occurrence of tags - most {co_occur_size}')
-    df = pd.DataFrame.from_records([{'name': textwrap.fill(k.replace("+", " + "), width=30, break_long_words=False), 'count': v} for k,v in dict(stats['co_occurrence'].most_common(co_occur_size)).items()])
-    sns.barplot(data=df, y='count', x='name', ax=ax)
-    plt.xticks(rotation=90)
-    plt.tight_layout()
+    # vocabulary
+    ax = plt.subplot(3,2,3)
+    # ax.set_title(f'Most common {vocab_size} words')
+    ax.grid()
+    df = pd.DataFrame.from_records([{'word': k, 'count': v} for k,v in dict(stats['vocab'].most_common(vocab_size)).items()])
+    sns.barplot(data=df, y='word', x='count', ax=ax, palette=palette)
+    sns.despine()
+    ax.set_xlabel('')
+    ax.set_ylabel('')
 
     # iob length analysis
-    fig, ax = plt.subplots(figsize=(10, 6))
+    ax = plt.subplot(3,2,5)
     ax.grid()
-    plt.title(f'IOB length (top {most_common_size})')
+    # ax.set_title(f'IOB length (top {most_common_size})')
     df = pd.DataFrame.from_records(sorted([{'tag': k, 'average IOB length': v} for k,v in stats['avg_iob_length'].items()], key=lambda el: el['average IOB length'], reverse=True)[:most_common_size])
-    sns.barplot(data=df, y='tag', x='average IOB length', ax=ax)
-    plt.tight_layout()
+    sns.barplot(data=df, y='tag', x='average IOB length', ax=ax, palette=palette)
+    sns.despine()
+    ax.set_xlabel('')
+    ax.set_ylabel('')
 
-    # vocabulary
-    fig, ax = plt.subplots(figsize=(12, 6))
-    plt.title(f'Most common {vocab_size} words')
-    df = pd.DataFrame.from_records([{'word': k, 'count': v} for k,v in dict(stats['vocab'].most_common(vocab_size)).items()])
-    sns.barplot(data=df, y='word', x='count', ax=ax)
-    plt.tight_layout()
+    # co-occurrence of tags
+    ax = plt.subplot(1, 2, 2)
+    ax.grid()
+    # ax.set_title(f'Co-occurrence of tags - most {co_occur_size}')
+    df = pd.DataFrame.from_records([{'name': textwrap.fill(k.replace("+", " + "), width=30, break_long_words=False), 'count': v} for k,v in dict(stats['co_occurrence'].most_common(co_occur_size)).items()])
+    sns.barplot(data=df, y='name', x='count', ax=ax, palette=palette)
+    sns.despine()
+    ax.set_xlabel('')
+    ax.set_ylabel('')
 
     # show figures
+    plt.tight_layout()
     plt.show() 
 

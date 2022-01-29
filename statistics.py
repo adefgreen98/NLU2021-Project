@@ -11,14 +11,23 @@ import seaborn as sns
 
 from collections import defaultdict
 from utils import stoval
+from itertools import product
 
-_statistics_path = 'nonattention_stats'
+_statistics_path = 'model_bidir_stats'
 _images_path = os.path.join(_statistics_path, 'images')
 _excluded_attributes = ('valid_ratio', 'epochs')
 _allowed_columns = ("date", "non-'O' acc.", "accuracy", "precision", "recall", "f1")
 
 if not os.path.exists(_statistics_path): os.mkdir(_statistics_path)
 if not os.path.exists(_images_path): os.mkdir(_images_path)
+
+def get_stats_path(): return _statistics_path
+def set_stats_path(name:str): 
+    global _statistics_path; 
+    _statistics_path = name
+    try: os.mkdir(name)
+    except FileExistsError: pass
+
 
 def get_fname(cfg:dict):
     tmp = {k: cfg[k] for k in cfg if k not in _excluded_attributes}
@@ -134,19 +143,21 @@ def retrieve_metric_dataframe(attribute, to_select_attrs=None, notfound_option:d
     l = []
     for el in retr_df.to_dict('records'):
         for k in el:
+            mdict = {}
+            mdict[attribute] = el[attribute]
+            if notfound_option is not None: 
+                if el[attribute] == 'not_found':
+                    mdict[attribute] = notfound_option.get(attribute, 'not_found')
             if k != attribute:
-                mdict = {'metric': k, 'value': el[k]}
-                mdict[attribute] = el[attribute]
-                if notfound_option is not None: 
-                    if el[attribute] == 'not_found':
-                        mdict[attribute] = notfound_option.get(attribute, 'not_found')
+                mdict['metric'] = k
+                mdict['value'] = el[k]
                 l.append(mdict) 
 
     return pandas.DataFrame.from_records(l)
 
 
 
-def build_histogram(*args, to_select_attrs:dict={}, notfound_option:dict=None, _savefig=False):
+def build_histogram(*args, to_select_attrs:dict={}, notfound_option:dict=None, metrics=['f1'], _savefig=False, **kwargs):
 
     for attribute in args:
         assert type(attribute) == str
@@ -155,10 +166,57 @@ def build_histogram(*args, to_select_attrs:dict={}, notfound_option:dict=None, _
 
         # Plotting
         plt.figure(figsize=(10, 10))
-        attr_metrics = set(df['metric'].tolist())
+        attr_metrics = set(df['metric'].tolist()).intersection(set(metrics))
             
         # attr_values = order_values(set(df[attribute].tolist()))
         attr_values = sorted(set(df[attribute].tolist()))
+
+        colors = sns.color_palette(kwargs.get('color_palette', 'pastel'), n_colors=len(attr_values))
+        _step = 4
+        _separation = _step * (len(attr_values) + 1)
+        _reduction = .8
+
+        # Error bar utilities
+        _ci = .8
+        _use_errs = False
+        
+        attr_pos = [list(np.arange(m - (len(attr_values) // 2)*_step , m + (len(attr_values) // 2)*_step + 1, _step)) for m in range(0, _separation*len(attr_metrics), _separation)]
+        plt.title(kwargs.get('title', attribute))
+        plt.xlabel("Value(%)")
+        plt.ylabel("Metric")
+        plt.xlim((max(df['value'].min() - 5, 0.0), 100))
+        plt.yticks(ticks=[pos[len(pos) // 2] for pos in attr_pos], labels=attr_metrics)
+        for i, m in enumerate(attr_metrics):
+            for j, k in enumerate(attr_values):
+                val_mean = df[(df[attribute] == k) & (df['metric'] == m)]['value'].mean()
+                val_std = (_ci * df[(df[attribute] == k) & (df['metric'] == m)]['value'].std()) if _use_errs else 0 
+                container = plt.barh(attr_pos[i][j], val_mean, height=_reduction*_step, label=k, color=colors[j], xerr=val_std)
+                plt.bar_label(container, fmt="%.2f", padding=int(val_std) + 3)
+
+        plt.legend(attr_values, loc='upper left')
+        sns.despine()
+
+        if _savefig: plt.savefig(os.path.join(_images_path, datetime.datetime.strftime(datetime.datetime.now(), "%Y_%m_%d_%H_%M_%S") + f"_{attribute}"))
+
+
+
+# manual selection functions
+
+def model_graph():
+    set_stats_path('model_bidir_stats')
+    metrics=['accuracy', 'f1', "non-'O' acc."]
+    attribute = "unit_name"
+    bidir_df = retrieve_metric_dataframe(attribute, to_select_attrs={'bidirectional': [True]})
+    nonbidir_df = retrieve_metric_dataframe(attribute, to_select_attrs={'bidirectional': [False]})
+
+    fig, axes = plt.subplots(nrows=1, ncols=2)
+    for i, df in enumerate([bidir_df, nonbidir_df]):
+        # Plotting
+        plt.subplot(eval("12" + str(i + 1)))
+        attr_metrics = set(df['metric'].tolist()).intersection(set(metrics))
+            
+        # attr_values = order_values(set(df[attribute].tolist()))
+        attr_values = ['rnn', 'lstm', 'gru']
 
         colors = sns.color_palette('pastel', n_colors=len(attr_values))
         _step = 4
@@ -170,6 +228,12 @@ def build_histogram(*args, to_select_attrs:dict={}, notfound_option:dict=None, _
         _use_errs = False
         
         attr_pos = [list(np.arange(m - (len(attr_values) // 2)*_step , m + (len(attr_values) // 2)*_step + 1, _step)) for m in range(0, _separation*len(attr_metrics), _separation)]
+        _title = "Models" + (" (bidirectional)" if i == 0 else " (non-bidirectional)")
+        plt.title(_title)
+        plt.xlabel("Value(%)")
+        plt.ylabel("Metric")
+        plt.xlim(kwargs.get('range', (max(df['value'].min() - 5, 0.0), 100)))
+        plt.yticks(ticks=[pos[len(pos) // 2] for pos in attr_pos], labels=attr_metrics)
         for i, m in enumerate(attr_metrics):
             for j, k in enumerate(attr_values):
                 val_mean = df[(df[attribute] == k) & (df['metric'] == m)]['value'].mean()
@@ -177,49 +241,124 @@ def build_histogram(*args, to_select_attrs:dict={}, notfound_option:dict=None, _
                 container = plt.barh(attr_pos[i][j], val_mean, height=_reduction*_step, label=k, color=colors[j], xerr=val_std)
                 plt.bar_label(container, fmt="%.2f", padding=int(val_std) + 3)
 
-        plt.legend(attr_values, loc='upper left', bbox_to_anchor=(.9, 1.0))
-        plt.title(attribute)
-        plt.xlabel("Value(%)")
-        plt.ylabel("Metric")
-        plt.xlim((df['value'].min() - 5, 100))
-        plt.yticks(ticks=[pos[len(pos) // 2] for pos in attr_pos], labels=attr_metrics)
+        plt.legend(attr_values, loc='upper left')
         sns.despine()
-
-        # plt.figure(figsize=(10, 6))
-        # ax = sns.barplot(data=df, hue=attribute, y='metric', x='value', orient='h')
-        # ax.set(xlim=[60, 105])
-        # for container in ax.containers: 
-        #     ax.bar_label(container, fmt="%.2f", padding=25)
-        # ax.spines['right'].set_visible(False)
-        # ax.spines['top'].set_visible(False)
-        # plt.suptitle(attribute)
-        # plt.legend(loc='upper left', borderaxespad=-1, bbox_to_anchor=(1.02, 1.0))
-
-
-        if _savefig: plt.savefig(os.path.join(_images_path, datetime.datetime.strftime(datetime.datetime.now(), "%Y_%m_%d_%H_%M_%S") + f"_{attribute}"))
     plt.show()
 
-def compute_diff(attribute, metric='f1'):
-    """
-    Computes mean difference between equal conditions except for the single parameter specified
-    """
 
+def optimizer_graph():
+    set_stats_path('best_arch_stats')
+    metrics=['accuracy', 'f1', "non-'O' acc."]
+    attribute = "optimizer"
+
+    ps = get_attr_possibilities()
+    layer_possibilities = ps['num_layers']
+    hidden_size_possibilities = ps['hidden_size']
+
+    adam_dframes = {}
+    wadam_dframes = {}
+    for cfg in product(layer_possibilities, hidden_size_possibilities):
+        tmp = retrieve_metric_dataframe('num_layers', to_select_attrs={'optimizer': ['adam'], 'hidden_size': [stoval(cfg[1])] })
+        tmp = tmp[tmp['metric'].isin(metrics)]
+        adam_dframes[str(cfg[0]) + "+" + str(cfg[1])] = tmp[tmp['num_layers'] == stoval(cfg[0])]
+
+        tmp = retrieve_metric_dataframe('num_layers', to_select_attrs={'optimizer': ['adamw'], 'hidden_size': [stoval(cfg[1])] })
+        tmp = tmp[tmp['metric'].isin(metrics)]
+        wadam_dframes[str(cfg[0]) + "+" + str(cfg[1])] = tmp[tmp['num_layers'] == stoval(cfg[0])]
+
+    for k in adam_dframes:
+        # insert column with current configuration value
+        adam_dframes[k].pop('num_layers')
+        adam_dframes[k].insert(0, 'architecture', [k for i in range(adam_dframes[k].shape[0])])
+        adam_dframes[k].insert(0, 'optimizer', ['adam' for i in range(adam_dframes[k].shape[0])])
+
+    for k in wadam_dframes:
+        wadam_dframes[k].pop('num_layers')
+        wadam_dframes[k].insert(0, 'architecture', [k for i in range(adam_dframes[k].shape[0])])
+        wadam_dframes[k].insert(0, 'optimizer', ['adamw' for i in range(adam_dframes[k].shape[0])])
+    
+    # now we create a dataframe (metric, value, architecture, optimizer)
+    df = pandas.concat(list(adam_dframes.values()) + list(wadam_dframes.values()))
+
+    plt.figure(figsize=(15,6))
+    ax = plt.subplot(1,3,(1,2))
+    sns.barplot(x='metric', y='value', hue='architecture', data=df, errwidth=0, ax=ax)
+    sns.despine()
+    for container in ax.containers: 
+        ax.bar_label(container, fmt="%.2f", padding=3, rotation=50, fontsize=12)
+
+    ax = plt.subplot(1,3,3)
+    sns.barplot(x='metric', y='value', hue='optimizer', data=df, ax=ax, orient='v', errwidth=0)
+    sns.despine()
+    ax.legend(loc='lower left')
+    for container in ax.containers: 
+        ax.bar_label(container, fmt="%.2f", padding=3, rotation=50, fontsize=12)
+    plt.show()
+
+
+def dec_input_graph():
+    set_stats_path('input_mode_stats')
+    metrics=['accuracy', 'f1', "non-'O' acc."]
+    attribute = "decoder_input_mode"
+
+    df = retrieve_metric_dataframe(attribute)
+
+    # Plotting
+    plt.figure(figsize=(10, 10))
+    attr_metrics = set(df['metric'].tolist()).intersection(set(metrics))
+        
+    # attr_values = order_values(set(df[attribute].tolist()))
+    attr_values = sorted(set(df[attribute].tolist()))
+
+    colors = sns.color_palette('pastel', n_colors=len(attr_values))
+    _step = 4
+    _separation = _step * (len(attr_values) + 1)
+    _reduction = .8
+
+    # Error bar utilities
+    _ci = .8
+    _use_errs = False
+    
+    attr_pos = [list(np.arange(m - (len(attr_values) // 2)*_step , m + (len(attr_values) // 2)*_step + 1, _step)) for m in range(0, _separation*len(attr_metrics), _separation)]
+    plt.xlabel("Value(%)")
+    plt.ylabel("Metric")
+    plt.xlim((60, 100))
+    plt.yticks(ticks=[pos[len(pos) // 2] for pos in attr_pos], labels=attr_metrics)
+    for i, m in enumerate(attr_metrics):
+        for j, k in enumerate(attr_values):
+            val_mean = df[(df[attribute] == k) & (df['metric'] == m)]['value'].mean()
+            val_std = (_ci * df[(df[attribute] == k) & (df['metric'] == m)]['value'].std()) if _use_errs else 0 
+            container = plt.barh(attr_pos[i][j], val_mean, height=_reduction*_step, label=k, color=colors[j], xerr=val_std)
+            plt.bar_label(container, fmt="%.2f", padding=int(val_std) + 3)
+    sns.despine()
+    
+    plt.legend(attr_values, loc='lower left')
+    plt.show()
+
+
+def attention_graph():
+    set_stats_path('attention_stats')
+    metrics=['accuracy', 'f1', "non-'O' acc."]
+    attribute = "attention_mode"
+
+    df = retrieve_metric_dataframe(attribute)
+    df = df[df['metric'].isin(metrics)]
+    df.loc[df['attention_mode'] == 'global', 'attention_mode'] = 'dot'
+    plt.figure(figsize=(10,10))
+    ax = plt.subplot(111)
+    sns.barplot(x='metric', y='value', hue=attribute, data=df, orient='v', errwidth=0)
+    plt.legend(loc='lower left')
+    for container in ax.containers: 
+        ax.bar_label(container, fmt="%.2f", padding=3, fontsize=12)
+    sns.despine()
+    plt.ylim((60, 100))
+    plt.show()
 
 
 if __name__ == '__main__':
 
     if len(os.sys.argv[1:]) != 0: build_histogram(*os.sys.argv[1:], _savefig=False)
     else:
-        attrs = ['internal_dropout', 'intermediate_dropout', 'num_layers']
+        attention_graph()
 
-        to_choose_all = {'num_layers': [2], 'bidirectional': [True], 'batch_size': [64]}
-        to_choose_layers = {'bidirectional': [True], 'batch_size': [64]}
-
-        build_histogram(*attrs,
-            to_select_attrs={
-                'internal_dropout': to_choose_all, 
-                'intermediate_dropout': to_choose_all, 
-                'num_layers': to_choose_layers
-            },
-            _savefig=False
-            )
+        
