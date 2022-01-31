@@ -104,7 +104,7 @@ parser.add_argument('--experiment', '--exp', type=str, choices=list(names.keys()
 parser.add_argument('--batch_size', type=int, default=64)
 parser.add_argument('--epochs', type=int, default=30)
 parser.add_argument('--iterations', type=int, default=10)
-parser.add_argument('--save_models', action='store_false')
+parser.add_argument('--save_models', action='store_true')
 parser.add_argument('--no_save_stats', action='store_true')
 
 def adjust_args(args_dict):
