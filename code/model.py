@@ -92,7 +92,7 @@ class Decoder(nn.Module):
 
 class Seq2SeqModel(nn.Module):
 
-    def __init__(self, dataset_path='iob_atis/atis.train.pkl', 
+    def __init__(self, dataset_path='data/atis.train.pkl', 
         embedding_method='glove', unit_name='gru',  
         num_layers=2, hidden_size=256, 
         intermediate_dropout=0.0, internal_dropout=0.0,

@@ -203,7 +203,7 @@ def build_histogram(*args, to_select_attrs:dict={}, notfound_option:dict=None, m
 # manual selection functions
 
 def model_graph():
-    set_stats_path('model_bidir_stats')
+    set_stats_path('Models_Bidirectionality_stats')
     metrics=['accuracy', 'f1', "non-'O' acc."]
     attribute = "unit_name"
     bidir_df = retrieve_metric_dataframe(attribute, to_select_attrs={'bidirectional': [True]})
@@ -232,7 +232,7 @@ def model_graph():
         plt.title(_title)
         plt.xlabel("Value(%)")
         plt.ylabel("Metric")
-        plt.xlim(kwargs.get('range', (max(df['value'].min() - 5, 0.0), 100)))
+        plt.xlim((0,100))
         plt.yticks(ticks=[pos[len(pos) // 2] for pos in attr_pos], labels=attr_metrics)
         for i, m in enumerate(attr_metrics):
             for j, k in enumerate(attr_values):
@@ -247,7 +247,7 @@ def model_graph():
 
 
 def optimizer_graph():
-    set_stats_path('best_arch_stats')
+    set_stats_path('LSTM_architecture_stats')
     metrics=['accuracy', 'f1', "non-'O' acc."]
     attribute = "optimizer"
 
@@ -297,11 +297,11 @@ def optimizer_graph():
 
 
 def dec_input_graph():
-    set_stats_path('input_mode_stats')
+    set_stats_path('Decoder_input_stats')
     metrics=['accuracy', 'f1', "non-'O' acc."]
     attribute = "decoder_input_mode"
 
-    df = retrieve_metric_dataframe(attribute)
+    df = retrieve_metric_dataframe(attribute, to_select_attrs={'optimizer': ['adam']})
 
     # Plotting
     plt.figure(figsize=(10, 10))
@@ -337,7 +337,7 @@ def dec_input_graph():
 
 
 def attention_graph():
-    set_stats_path('attention_stats')
+    set_stats_path('10it_Attention_stats')
     metrics=['accuracy', 'f1', "non-'O' acc."]
     attribute = "attention_mode"
 
@@ -359,6 +359,10 @@ if __name__ == '__main__':
 
     if len(os.sys.argv[1:]) != 0: build_histogram(*os.sys.argv[1:], _savefig=False)
     else:
+        model_graph()
+        optimizer_graph()
+        dec_input_graph()
         attention_graph()
+
 
         

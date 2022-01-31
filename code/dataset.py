@@ -17,7 +17,7 @@ def get_tag(iob_s): return iob_s.split('-')[-1] if iob_s != 'O' else None
 
 class ATISDataset(torch.utils.data.Dataset):
     
-    def __init__(self, path="iob_atis\\atis.train.pkl"):
+    def __init__(self, path="data\\atis.train.pkl"):
         """
         :param path: path of the .json file containing the dataset.
         """
