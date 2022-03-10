@@ -1,5 +1,7 @@
 # NLU2021 - Project
 This is the repository for the Natural Language Understanding project for year 2021. The main objective is to carry on an analysis of recurrent models applied to **concept tagging** (aka slot filling). 
+It consists in reproducing recent results on neural concept tagging (e.g. seq2seq models, different attention mechanisms); furthermore, it contributes with an analysis of 
+how 5 different input modalities affect performance. More information can be found in the report.
 
 ## Usage
 Install the requirements via `pip install requirements.txt`
